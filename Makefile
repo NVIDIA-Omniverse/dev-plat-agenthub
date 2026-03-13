@@ -96,7 +96,7 @@ else ifeq ($(shell uname),Linux)
 	fi
 endif
 	@echo "==> Downloading Go module dependencies..."
-	go mod download
+	@PATH=/usr/local/go/bin:$$PATH go mod download
 	@echo "==> All dependencies installed."
 
 # Download htmx only if the file is missing (file target — not re-downloaded on every build).
