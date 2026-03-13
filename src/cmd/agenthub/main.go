@@ -82,10 +82,17 @@ func cmdServe(_ []string) error {
 		return cmdServeSetupMode(cfg, tmpl)
 	}
 
-	// Prompt for the admin password to unlock the encrypted store.
-	password, err := readPassword("Admin password: ")
-	if err != nil {
-		return fmt.Errorf("reading password: %w", err)
+	// Unlock the encrypted store. AGENTHUB_ADMIN_PASSWORD env var takes
+	// precedence (for systemd/CI); falls back to interactive prompt.
+	var password string
+	if pw := os.Getenv("AGENTHUB_ADMIN_PASSWORD"); pw != "" {
+		password = pw
+	} else {
+		var err error
+		password, err = readPassword("Admin password: ")
+		if err != nil {
+			return fmt.Errorf("reading password: %w", err)
+		}
 	}
 
 	st, err := store.Open(cfg.Store.Path, password)
