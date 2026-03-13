@@ -9,7 +9,10 @@ BUILD_DIR    := .
 GIT_BUILD    := $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
 VERSION      := $(shell cat VERSION 2>/dev/null || echo "0.0.0")
 BINARY       := $(BUILD_DIR)/agenthub
-INSTALL_DIR  ?= $(shell go env GOPATH)/bin
+
+# Locate go; fall back to the path that 'make deps' installs to on Linux.
+GO           := $(shell which go 2>/dev/null || echo /usr/local/go/bin/go)
+INSTALL_DIR  ?= $(shell $(GO) env GOPATH 2>/dev/null || echo $(HOME)/go)/bin
 
 # Minimum Go minor version that supports GOTOOLCHAIN auto-switching (1.21).
 # If the system Go is older than this, deps will install Go from go.dev/dl/.
@@ -42,6 +45,16 @@ endif
 endif
 
 LDFLAGS := -X main.Version=$(VERSION) -X main.Build=$(GIT_BUILD)
+
+# ── Dependency guard ──────────────────────────────────────────────────────────
+
+## ensure-go: Auto-run deps if Go is not installed (called automatically by other targets)
+.PHONY: ensure-go
+ensure-go:
+	@if [ ! -x "$(GO)" ]; then \
+		echo "==> Go not found — running 'make deps' first..."; \
+		$(MAKE) deps; \
+	fi
 
 # ── Dependency targets ────────────────────────────────────────────────────────
 
@@ -96,7 +109,7 @@ else ifeq ($(shell uname),Linux)
 	fi
 endif
 	@echo "==> Downloading Go module dependencies..."
-	@PATH=/usr/local/go/bin:$$PATH go mod download
+	@PATH=/usr/local/go/bin:$$PATH $(GO) mod download
 	@echo "==> All dependencies installed."
 
 # Download htmx only if the file is missing (file target — not re-downloaded on every build).
@@ -108,9 +121,9 @@ $(HTMX_JS):
 # ── Build targets ─────────────────────────────────────────────────────────────
 
 ## build: Compile the agenthub binary (downloads htmx if missing)
-build: $(HTMX_JS)
+build: ensure-go $(HTMX_JS)
 	@echo "Building agenthub $(VERSION) ($(GIT_BUILD))..."
-	go build -ldflags="$(LDFLAGS)" -o $(BINARY) ./src/cmd/agenthub/...
+	$(GO) build -ldflags="$(LDFLAGS)" -o $(BINARY) ./src/cmd/agenthub/...
 ifeq ($(shell uname),Darwin)
 	@codesign -s - -f $(BINARY) 2>/dev/null || true
 endif
@@ -125,16 +138,16 @@ install: deps build
 # ── Test targets ──────────────────────────────────────────────────────────────
 
 ## test: Run all unit tests
-test: $(HTMX_JS)
+test: ensure-go $(HTMX_JS)
 	@echo "Running tests..."
-	go test ./src/... -timeout 120s
+	$(GO) test ./src/... -timeout 120s
 
 ## test-cover: Run tests with coverage gate (minimum 90%)
-test-cover: $(HTMX_JS)
+test-cover: ensure-go $(HTMX_JS)
 	@echo "Running tests with coverage..."
-	go test ./src/... -coverprofile=coverage.out -covermode=atomic -timeout 120s
-	@go tool cover -func=coverage.out | tail -1
-	@COVERAGE=$$(go tool cover -func=coverage.out | tail -1 | awk '{print $$3}' | tr -d '%'); \
+	$(GO) test ./src/... -coverprofile=coverage.out -covermode=atomic -timeout 120s
+	@$(GO) tool cover -func=coverage.out | tail -1
+	@COVERAGE=$$($(GO) tool cover -func=coverage.out | tail -1 | awk '{print $$3}' | tr -d '%'); \
 	  echo "Total coverage: $$COVERAGE%"; \
 	  if [ "$$(echo "$$COVERAGE < 90" | bc -l)" = "1" ]; then \
 	    echo "ERROR: Coverage $$COVERAGE% is below 90% minimum"; \
@@ -143,25 +156,25 @@ test-cover: $(HTMX_JS)
 	@echo "Coverage OK."
 
 ## test-integration: Run integration tests (requires running Dolt server)
-test-integration:
-	go test -tags integration ./tests/integration/... -v -timeout 300s
+test-integration: ensure-go
+	$(GO) test -tags integration ./tests/integration/... -v -timeout 300s
 
 # ── Code quality ──────────────────────────────────────────────────────────────
 
 ## fmt: Format all Go source files
-fmt:
-	gofmt -w ./src/...
+fmt: ensure-go
+	$(shell dirname $(GO))/gofmt -w ./src/...
 
 ## lint: Run static analysis
-lint:
-	go vet ./src/...
+lint: ensure-go
+	$(GO) vet ./src/...
 
 # ── Runtime targets ───────────────────────────────────────────────────────────
 
 ## setup: First-run: initialize admin password and encrypted store
-setup:
+setup: ensure-go
 	@echo "Running first-time setup..."
-	go run ./src/cmd/agenthub/... setup
+	$(GO) run ./src/cmd/agenthub/... setup
 
 # ── Housekeeping ──────────────────────────────────────────────────────────────
 

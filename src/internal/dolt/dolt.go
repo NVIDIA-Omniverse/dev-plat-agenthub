@@ -14,7 +14,7 @@ import (
 	"time"
 
 	// MySQL-compatible driver for Dolt.
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 )
 
 // DB wraps *sql.DB with agenthub-specific methods.
@@ -25,9 +25,19 @@ type DB struct {
 // NewDB wraps an existing *sql.DB. Used in tests to inject a mock database.
 func NewDB(db *sql.DB) *DB { return &DB{db} }
 
-// Open opens a connection to the Dolt SQL server at dsn and verifies connectivity.
+// Open opens a connection to the Dolt SQL server at dsn, creating the target
+// database if it does not already exist, and verifies connectivity.
 // Call Migrate after opening to ensure the schema is up-to-date.
 func Open(dsn string) (*DB, error) {
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parsing dolt dsn: %w", err)
+	}
+
+	if err := ensureDatabase(cfg); err != nil {
+		return nil, err
+	}
+
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening dolt connection: %w", err)
@@ -42,6 +52,33 @@ func Open(dsn string) (*DB, error) {
 	}
 
 	return &DB{db}, nil
+}
+
+// ensureDatabase connects to the Dolt server without a database and creates
+// the target database if it does not already exist.
+func ensureDatabase(cfg *mysql.Config) error {
+	dbName := cfg.DBName
+	cfg.DBName = ""
+
+	bootstrap, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		return fmt.Errorf("opening bootstrap dolt connection: %w", err)
+	}
+	defer bootstrap.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := bootstrap.PingContext(ctx); err != nil {
+		return fmt.Errorf("pinging dolt server: %w", err)
+	}
+
+	_, err = bootstrap.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS `"+dbName+"`")
+	if err != nil {
+		return fmt.Errorf("creating database %q: %w", dbName, err)
+	}
+
+	return nil
 }
 
 // Migrate runs all schema migrations. It is idempotent.
