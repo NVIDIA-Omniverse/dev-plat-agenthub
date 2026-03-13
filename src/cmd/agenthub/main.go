@@ -21,6 +21,8 @@ import (
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/dolt"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/kanban"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/openclaw"
+	"github.com/NVIDIA-DevPlat/agenthub/src/internal/openai"
+	islack "github.com/NVIDIA-DevPlat/agenthub/src/internal/slack"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/store"
 	"golang.org/x/term"
 )
@@ -162,6 +164,43 @@ func cmdServe(_ []string) error {
 		Handler:      mux,
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
+	}
+
+	// Start Slack handler if tokens are available.
+	slackBotToken, _ := st.Get("slack_bot_token")
+	slackAppToken, _ := st.Get("slack_app_token")
+	if slackBotToken != "" && slackAppToken != "" {
+		regToken, _ := st.Get("registration_token")
+		openaiKey, _ := st.Get("openai_api_key")
+		var aiChat islack.AIChatter
+		if openaiKey != "" {
+			aiChat = &openaiChatter{
+				client: openai.NewClient(openaiKey, cfg.OpenAI.Model, cfg.OpenAI.MaxTokens, cfg.OpenAI.SystemPrompt),
+			}
+		} else {
+			aiChat = &noopAIChatter{}
+		}
+		prober := &openclawProber{cfg: cfg.Openclaw, timeout: cfg.Openclaw.LivenessTimeout}
+		slackDeps := &islack.Deps{
+			BotRegistry:   &doltBotRegistry{db: db, cfg: cfg.Openclaw},
+			TaskManager:   &slackTaskManager{beads: beadsClient, db: db},
+			AIChat:        aiChat,
+			OpenclawCheck: prober,
+			Config: islack.SlackConfig{
+				CommandPrefix:     cfg.Slack.CommandPrefix,
+				AgenthubURL:       cfg.Server.PublicURL,
+				RegistrationToken: regToken,
+			},
+		}
+		slackHandler := islack.NewHandler(slackBotToken, slackAppToken, slackDeps)
+		go func() {
+			if err := slackHandler.Run(ctx); err != nil {
+				slog.Error("slack handler exited", "error", err)
+			}
+		}()
+		slog.Info("slack: connected via Socket Mode")
+	} else {
+		slog.Info("slack: tokens not configured, skipping Slack integration")
 	}
 
 	fmt.Printf("agenthub %s serving on %s\n", Version, cfg.Server.HTTPAddr)
@@ -428,4 +467,159 @@ func generateSecret(n int) (string, error) {
 		return "", fmt.Errorf("generating secret: %w", err)
 	}
 	return fmt.Sprintf("%x", buf), nil
+}
+
+// ── openclawProber: satisfies both api.HealthProber and slack.OpenclawChecker ──
+
+// CheckHealth satisfies slack.OpenclawChecker.
+func (p *openclawProber) CheckHealth(ctx context.Context, host string, port int) error {
+	return p.Probe(ctx, host, port)
+}
+
+// SendMentionOnly satisfies slack.OpenclawChecker.
+func (p *openclawProber) SendMentionOnly(ctx context.Context, host string, port int) error {
+	client := openclaw.NewClient(host, port, p.timeout, p.cfg.HealthPath, p.cfg.DirectivesPath)
+	sendCtx, cancel := context.WithTimeout(ctx, p.timeout)
+	defer cancel()
+	return client.SetMentionOnly(sendCtx)
+}
+
+// SendOnboarding satisfies slack.OpenclawChecker and delivers the full BOTJILE directive.
+func (p *openclawProber) SendOnboarding(ctx context.Context, host string, port int, agenthubURL, regToken, botName string) error {
+	client := openclaw.NewClient(host, port, p.timeout, p.cfg.HealthPath, p.cfg.DirectivesPath)
+	sendCtx, cancel := context.WithTimeout(ctx, p.timeout)
+	defer cancel()
+	return client.SendOnboarding(sendCtx, openclaw.OnboardingInfo{
+		AgenthubURL:       agenthubURL,
+		RegistrationToken: regToken,
+		BotName:           botName,
+		CreateTaskOnDM:    true,
+		Instructions: "BOTJILE policy: when a user DMs you with a task, call " +
+			"POST " + agenthubURL + "/api/tasks (X-Registration-Token: " + regToken + ") " +
+			"with {\"title\":\"<task>\",\"bot_name\":\"" + botName + "\"} BEFORE starting work. " +
+			"Update status via POST " + agenthubURL + "/api/tasks/{id}/status as you progress.",
+	})
+}
+
+// ── doltBotRegistry adapts dolt.DB to slack.BotRegistry ──────────────────────
+
+type doltBotRegistry struct {
+	db  *dolt.DB
+	cfg config.OpenclawConfig
+}
+
+func (r *doltBotRegistry) RegisterBot(ctx context.Context, channelID, name, host string, port int, owner string) error {
+	// Generate a new UUID v4 for the instance.
+	id, err := newRegistryUUID()
+	if err != nil {
+		return fmt.Errorf("generating bot id: %w", err)
+	}
+	return r.db.CreateInstance(ctx, dolt.Instance{
+		ID:             id,
+		Name:           name,
+		Host:           host,
+		Port:           port,
+		ChannelID:      channelID,
+		OwnerSlackUser: owner,
+		IsAlive:        true,
+	})
+}
+
+func (r *doltBotRegistry) UnregisterBot(ctx context.Context, channelID, name, _ string) error {
+	return r.db.DeleteInstance(ctx, name, channelID)
+}
+
+func (r *doltBotRegistry) ListBots(ctx context.Context, channelID string) ([]islack.BotSummary, error) {
+	instances, err := r.db.ListInstances(ctx, channelID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]islack.BotSummary, len(instances))
+	for i, inst := range instances {
+		out[i] = islack.BotSummary{Name: inst.Name, Host: inst.Host, Port: inst.Port,
+			IsAlive: inst.IsAlive, Chatty: inst.Chatty}
+	}
+	return out, nil
+}
+
+func (r *doltBotRegistry) SetChatty(ctx context.Context, channelID, name string, chatty bool) error {
+	return r.db.UpdateChatty(ctx, name, channelID, chatty)
+}
+
+func (r *doltBotRegistry) AliveBots(ctx context.Context, channelID string) ([]islack.BotSummary, error) {
+	instances, err := r.db.ListInstances(ctx, channelID)
+	if err != nil {
+		return nil, err
+	}
+	var out []islack.BotSummary
+	for _, inst := range instances {
+		if inst.IsAlive {
+			out = append(out, islack.BotSummary{Name: inst.Name, Host: inst.Host,
+				Port: inst.Port, IsAlive: true, Chatty: inst.Chatty})
+		}
+	}
+	return out, nil
+}
+
+// newRegistryUUID generates a UUID v4 for new bot registrations.
+func newRegistryUUID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
+}
+
+// ── slackTaskManager: CreateAndRoute for the Slack handler ────────────────────
+
+// slackTaskManager implements slack.TaskManager using beads for task creation
+// and dolt for bot lookup (to route to alive bots when no specific bot is named).
+type slackTaskManager struct {
+	beads *beads.Client
+	db    *dolt.DB
+}
+
+func (m *slackTaskManager) CreateAndRoute(ctx context.Context, desc, botName, actor string) (string, string, error) {
+	if m.beads == nil {
+		return "", "", fmt.Errorf("beads not configured")
+	}
+	issue, err := m.beads.CreateTask(ctx, desc, "", actor, 2)
+	if err != nil {
+		return "", "", fmt.Errorf("creating task: %w", err)
+	}
+	// Route to a specific bot if named, otherwise pick any alive bot.
+	assigned := botName
+	if assigned == "" && m.db != nil {
+		if bots, err := m.db.ListAllInstances(ctx); err == nil {
+			for _, b := range bots {
+				if b.IsAlive {
+					assigned = b.Name
+					break
+				}
+			}
+		}
+	}
+	if assigned != "" {
+		if err := m.beads.AssignTask(ctx, issue.ID, assigned, actor); err != nil {
+			slog.Warn("slack: could not assign task to bot", "task", issue.ID, "bot", assigned, "error", err)
+		}
+	}
+	return issue.ID, assigned, nil
+}
+
+// ── openaiChatter: adapts openai.Client to slack.AIChatter ───────────────────
+
+type openaiChatter struct{ client *openai.Client }
+
+func (c *openaiChatter) Respond(ctx context.Context, msg, _ string) (string, error) {
+	return c.client.Chat(ctx, []openai.Message{{Role: "user", Content: msg}})
+}
+
+// noopAIChatter is used when no OpenAI key is configured.
+type noopAIChatter struct{}
+
+func (n *noopAIChatter) Respond(_ context.Context, _ string, _ string) (string, error) {
+	return "(OpenAI not configured — set openai_api_key in Secrets)", nil
 }

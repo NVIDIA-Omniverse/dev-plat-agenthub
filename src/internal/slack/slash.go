@@ -144,8 +144,10 @@ type Deps struct {
 
 // SlackConfig holds the Slack-specific config values needed by the handler.
 type SlackConfig struct {
-	CommandPrefix string
-	ChannelID     string // agenthub's own DM/notification channel
+	CommandPrefix     string
+	ChannelID         string // agenthub's own DM/notification channel
+	AgenthubURL       string // public base URL sent to bots during onboarding
+	RegistrationToken string // shared secret sent to bots during onboarding
 }
 
 // BotRegistry manages the openclaw instance database.
@@ -167,8 +169,11 @@ type AIChatter interface {
 	Respond(ctx context.Context, userMessage string, channelID string) (string, error)
 }
 
-// OpenclawChecker verifies that a host:port is reachable.
+// OpenclawChecker verifies that a host:port is reachable and can send directives.
 type OpenclawChecker interface {
 	CheckHealth(ctx context.Context, host string, port int) error
 	SendMentionOnly(ctx context.Context, host string, port int) error
+	// SendOnboarding sends the BOTJILE onboarding directive to a newly bound bot,
+	// giving it the agenthub URL, token, and task-creation policy.
+	SendOnboarding(ctx context.Context, host string, port int, agenthubURL, regToken, botName string) error
 }

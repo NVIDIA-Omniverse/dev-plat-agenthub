@@ -29,6 +29,7 @@ type Config struct {
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
 	HTTPAddr          string        `yaml:"http_addr"`
+	PublicURL         string        `yaml:"public_url"`          // externally reachable base URL (used in bot onboarding)
 	ReadTimeout       time.Duration `yaml:"read_timeout"`
 	WriteTimeout      time.Duration `yaml:"write_timeout"`
 	SessionCookieName string        `yaml:"session_cookie_name"`

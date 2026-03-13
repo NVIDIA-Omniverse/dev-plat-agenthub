@@ -635,6 +635,58 @@ func TestHandleKanbanTaskCreateEmptyTitle(t *testing.T) {
 	require.Equal(t, http.StatusSeeOther, w.Code)
 }
 
+func TestHandleKanbanTaskStatusError(t *testing.T) {
+	srv := testServerWithOptions(t, WithTaskManager(&mockTaskManager{err: errors.New("update failed")}))
+	cookie := loginTo(t, srv)
+
+	form := url.Values{"status": {"done"}}
+	r := httptest.NewRequest(http.MethodPost, "/admin/kanban/tasks/t1/status", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	require.Equal(t, http.StatusSeeOther, w.Code)
+}
+
+func TestHandleKanbanTaskCreateError(t *testing.T) {
+	srv := testServerWithOptions(t, WithTaskManager(&mockTaskManager{err: errors.New("create failed")}))
+	cookie := loginTo(t, srv)
+
+	form := url.Values{"title": {"my task"}}
+	r := httptest.NewRequest(http.MethodPost, "/admin/kanban/tasks", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	require.Equal(t, http.StatusSeeOther, w.Code)
+}
+
+func TestHandleKanbanTaskStatusParseFormError(t *testing.T) {
+	srv := testServerWithOptions(t, WithTaskManager(&mockTaskManager{}))
+	cookie := loginTo(t, srv)
+
+	r := httptest.NewRequest(http.MethodPost, "/admin/kanban/tasks/t1/status", errBodyReader{})
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.ContentLength = -1
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	require.Equal(t, http.StatusSeeOther, w.Code)
+}
+
+func TestHandleKanbanTaskCreateParseFormError(t *testing.T) {
+	srv := testServerWithOptions(t, WithTaskManager(&mockTaskManager{}))
+	cookie := loginTo(t, srv)
+
+	r := httptest.NewRequest(http.MethodPost, "/admin/kanban/tasks", errBodyReader{})
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.ContentLength = -1
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	require.Equal(t, http.StatusSeeOther, w.Code)
+}
+
 // --------------------------------------------------------------------------
 // ServerOption function tests (exercise each option constructor)
 // --------------------------------------------------------------------------
@@ -712,6 +764,96 @@ func TestHandleBotListCapacityError(t *testing.T) {
 	srv.ServeHTTP(w, r)
 	// Capacity errors are silently ignored; page still renders.
 	require.Equal(t, http.StatusOK, w.Code)
+}
+
+// --------------------------------------------------------------------------
+// handleBotTaskCreate tests
+// --------------------------------------------------------------------------
+
+func TestHandleBotTaskCreateUnauthorized(t *testing.T) {
+	srv, _, _ := testServer(t)
+	r := httptest.NewRequest(http.MethodPost, "/api/tasks",
+		strings.NewReader(`{"title":"do work"}`))
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestHandleBotTaskCreateInvalidJSON(t *testing.T) {
+	srv, _, st := testServer(t)
+	require.NoError(t, st.Set("registration_token", "tok"))
+
+	r := httptest.NewRequest(http.MethodPost, "/api/tasks", strings.NewReader(`bad`))
+	r.Header.Set("X-Registration-Token", "tok")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandleBotTaskCreateMissingTitle(t *testing.T) {
+	srv, _, st := testServer(t)
+	require.NoError(t, st.Set("registration_token", "tok"))
+
+	r := httptest.NewRequest(http.MethodPost, "/api/tasks",
+		strings.NewReader(`{"title":""}`))
+	r.Header.Set("X-Registration-Token", "tok")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestHandleBotTaskCreateNoTaskManager(t *testing.T) {
+	srv, _, st := testServer(t)
+	require.NoError(t, st.Set("registration_token", "tok"))
+
+	r := httptest.NewRequest(http.MethodPost, "/api/tasks",
+		strings.NewReader(`{"title":"some work"}`))
+	r.Header.Set("X-Registration-Token", "tok")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestHandleBotTaskCreateSuccess(t *testing.T) {
+	srv, _, st := testServer(t)
+	require.NoError(t, st.Set("registration_token", "tok"))
+	srv.taskManager = &mockTaskManager{}
+
+	r := httptest.NewRequest(http.MethodPost, "/api/tasks",
+		strings.NewReader(`{"title":"do work","bot_name":"mybot","priority":1}`))
+	r.Header.Set("X-Registration-Token", "tok")
+	r.Header.Set("X-Bot-Name", "mybot")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	require.Equal(t, http.StatusCreated, w.Code)
+	require.Contains(t, w.Body.String(), "t1")
+}
+
+func TestHandleBotTaskCreateSuccessDefaultPriority(t *testing.T) {
+	srv, _, st := testServer(t)
+	require.NoError(t, st.Set("registration_token", "tok"))
+	srv.taskManager = &mockTaskManager{}
+
+	// priority=0 in request → defaults to 2
+	r := httptest.NewRequest(http.MethodPost, "/api/tasks",
+		strings.NewReader(`{"title":"work"}`))
+	r.Header.Set("X-Registration-Token", "tok")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	require.Equal(t, http.StatusCreated, w.Code)
+}
+
+func TestHandleBotTaskCreateError(t *testing.T) {
+	srv, _, st := testServer(t)
+	require.NoError(t, st.Set("registration_token", "tok"))
+	srv.taskManager = &mockTaskManager{err: errors.New("beads down")}
+
+	r := httptest.NewRequest(http.MethodPost, "/api/tasks",
+		strings.NewReader(`{"title":"do work"}`))
+	r.Header.Set("X-Registration-Token", "tok")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	require.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 // --------------------------------------------------------------------------

@@ -6,6 +6,10 @@
 server:
   # HTTP listen address for the admin web UI and API
   http_addr: ":8080"
+  # Public base URL of this agenthub instance (sent to bots during onboarding so
+  # they know where to POST tasks and status updates back).
+  # Example: "https://agenthub.example.com"  Leave empty to skip onboarding directives.
+  public_url: ""
   # Read and write timeouts for HTTP connections
   read_timeout: 30s
   write_timeout: 30s
@@ -42,12 +46,26 @@ openai:
   model: "gpt-4o-mini"
   # Maximum tokens per response
   max_tokens: 1024
-  # System prompt for agenthub's OpenAI assistant
+  # System prompt for agenthub's OpenAI assistant.
+  # BOTJILE: every DM that contains a task is automatically tracked on the kanban board.
   system_prompt: >
-    You are agenthub, a bot manager for a Slack workspace.
-    You help users check the status of their AI bots, list registered bots,
-    create and route work items, and answer questions about the bot ecosystem.
-    Be concise and helpful. Respond in plain text suitable for Slack.
+    You are agenthub, a Slack-native work distribution hub for a fleet of AI bots (openclaw instances).
+    Your operating model is BOTJILE — Full Agile for bots.
+
+    Core principles:
+    - Every piece of work lives on the kanban board. No dark work. No shadow tasks.
+    - The kanban board shows both projects (things many bots collaborate on) and individual
+      bot activity: what each bot is doing right now, what it has finished, what is in its backlog.
+    - When a user DMs you with something to do, a bead (task) is automatically created and routed
+      to the best available bot. You always acknowledge the task ID in your reply.
+    - Bots report their own status back via the agenthub API as they work, so the board stays live.
+
+    When responding to users:
+    - Reference task IDs (e.g. AH-42) when they exist.
+    - Be concise and direct — Slack messages, not essays.
+    - For bot status queries, summarise what each bot is working on and what is queued.
+    - For work requests, confirm what was created and who is working on it.
+    - Respond in plain text suitable for Slack (no markdown headers).
 
 beads:
   # Path to the Beads/Dolt database directory

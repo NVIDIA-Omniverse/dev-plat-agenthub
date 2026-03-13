@@ -108,10 +108,23 @@ func (h *Handler) handleBind(ctx context.Context, cmd slack.SlashCommand) (strin
 	if err := h.deps.BotRegistry.RegisterBot(ctx, cmd.ChannelID, bc.Name, bc.Host, bc.Port, cmd.UserID); err != nil {
 		return "", fmt.Errorf("registering bot: %s", err)
 	}
-	if err := h.deps.OpenclawCheck.SendMentionOnly(ctx, bc.Host, bc.Port); err != nil {
-		slog.Warn("slack: could not set mention-only", "host", bc.Host, "port", bc.Port, "error", err)
+	// Send the full BOTJILE onboarding directive (includes mention-only + task policy).
+	// If the agenthub URL or token aren't configured, fall back to mention-only only.
+	if h.deps.Config.AgenthubURL != "" && h.deps.Config.RegistrationToken != "" {
+		if err := h.deps.OpenclawCheck.SendOnboarding(ctx, bc.Host, bc.Port,
+			h.deps.Config.AgenthubURL, h.deps.Config.RegistrationToken, bc.Name); err != nil {
+			slog.Warn("slack: could not send onboarding directive", "bot", bc.Name, "error", err)
+			// Fall back to mention-only so the bot is at least configured.
+			if err2 := h.deps.OpenclawCheck.SendMentionOnly(ctx, bc.Host, bc.Port); err2 != nil {
+				slog.Warn("slack: could not set mention-only", "host", bc.Host, "port", bc.Port, "error", err2)
+			}
+		}
+	} else {
+		if err := h.deps.OpenclawCheck.SendMentionOnly(ctx, bc.Host, bc.Port); err != nil {
+			slog.Warn("slack: could not set mention-only", "host", bc.Host, "port", bc.Port, "error", err)
+		}
 	}
-	return fmt.Sprintf(":white_check_mark: Bot *%s* bound to this channel.", bc.Name), nil
+	return fmt.Sprintf(":white_check_mark: Bot *%s* bound to this channel and briefed on BOTJILE task policy.", bc.Name), nil
 }
 
 func (h *Handler) handleList(ctx context.Context, cmd slack.SlashCommand) (string, error) {
@@ -182,13 +195,28 @@ func (h *Handler) handleAPIEvent(ctx context.Context, event slackevents.EventsAP
 		if !ok || ev.SubType != "" {
 			return
 		}
+		// BOTJILE: every DM to agenthub that looks like work gets a bead.
+		// Create the task first so it's on the board before we even respond.
+		var taskRef string
+		if h.deps.TaskManager != nil && ev.Text != "" {
+			taskID, assignedBot, err := h.deps.TaskManager.CreateAndRoute(ctx, ev.Text, "", ev.User)
+			if err != nil {
+				slog.Warn("slack: could not create task from DM", "error", err)
+			} else {
+				taskRef = fmt.Sprintf(":white_check_mark: Task `%s` created", taskID)
+				if assignedBot != "" {
+					taskRef += fmt.Sprintf(" and routed to *%s*", assignedBot)
+				}
+				taskRef += ".\n"
+			}
+		}
 		response, err := h.deps.AIChat.Respond(ctx, ev.Text, ev.Channel)
 		if err != nil {
 			slog.Error("slack: AI error in DM", "error", err)
 			return
 		}
 		_, _, _ = h.client.PostMessage(ev.Channel,
-			slack.MsgOptionText(response, false),
+			slack.MsgOptionText(taskRef+response, false),
 		)
 	}
 }

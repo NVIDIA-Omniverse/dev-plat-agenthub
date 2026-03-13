@@ -82,9 +82,10 @@ func (m *mockAIChat) Respond(_ context.Context, _, _ string) (string, error) {
 }
 
 type mockOpenclawChecker struct {
-	healthErr    error
-	directiveErr error
-	checked      []string // "host:port" strings that were checked
+	healthErr      error
+	directiveErr   error
+	onboardingErr  error
+	checked        []string // "host:port" strings that were checked
 }
 
 func (m *mockOpenclawChecker) CheckHealth(_ context.Context, host string, port int) error {
@@ -94,6 +95,10 @@ func (m *mockOpenclawChecker) CheckHealth(_ context.Context, host string, port i
 
 func (m *mockOpenclawChecker) SendMentionOnly(_ context.Context, _ string, _ int) error {
 	return m.directiveErr
+}
+
+func (m *mockOpenclawChecker) SendOnboarding(_ context.Context, _ string, _ int, _, _, _ string) error {
+	return m.onboardingErr
 }
 
 func formatHostPort(host string, port int) string {

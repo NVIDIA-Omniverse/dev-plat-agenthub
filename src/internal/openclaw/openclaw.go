@@ -101,8 +101,28 @@ func (c *Client) HealthWithCapacity(ctx context.Context) (*CapacityReport, error
 
 // directive is the JSON body for POST /directives.
 type directive struct {
-	MentionOnly *bool `json:"mention_only,omitempty"`
-	Chatty      *bool `json:"chatty,omitempty"`
+	MentionOnly *bool           `json:"mention_only,omitempty"`
+	Chatty      *bool           `json:"chatty,omitempty"`
+	Onboarding  *OnboardingInfo `json:"onboarding,omitempty"`
+}
+
+// OnboardingInfo is included in the onboarding directive sent to a bot when it
+// first binds to agenthub. It tells the bot how to call back to agenthub so it
+// can self-report work and maintain kanban visibility.
+//
+// BOTJILE contract: whenever a user DMs the bot with a task, the bot MUST:
+//  1. POST /api/tasks on AgenthubURL (with X-Registration-Token: RegistrationToken)
+//     body: {"title": "<task>", "bot_name": BotName, "priority": 2}
+//  2. Begin working on the task, updating status via POST /api/tasks/{id}/status
+//     as progress is made (in_progress → review → done).
+//
+// This keeps the kanban board as the single source of truth for all bot activity.
+type OnboardingInfo struct {
+	AgenthubURL       string `json:"agenthub_url"`       // base URL of this agenthub instance
+	RegistrationToken string `json:"registration_token"` // shared secret for bot→hub API calls
+	BotName           string `json:"bot_name"`           // this bot's registered name
+	CreateTaskOnDM    bool   `json:"create_task_on_dm"`  // always true — included for explicitness
+	Instructions      string `json:"instructions"`       // human-readable summary of the policy
 }
 
 // SetMentionOnly sends a directive telling the instance to only respond when @mentioned.
@@ -114,6 +134,14 @@ func (c *Client) SetMentionOnly(ctx context.Context) error {
 // SetChatty sends a directive setting the instance's chatty mode.
 func (c *Client) SetChatty(ctx context.Context, chatty bool) error {
 	return c.sendDirective(ctx, directive{Chatty: &chatty})
+}
+
+// SendOnboarding sends the initial onboarding directive to a newly bound bot.
+// It combines mention-only mode with the BOTJILE task policy so the bot knows
+// how to self-report all work back to the agenthub kanban board.
+func (c *Client) SendOnboarding(ctx context.Context, info OnboardingInfo) error {
+	t := true
+	return c.sendDirective(ctx, directive{MentionOnly: &t, Onboarding: &info})
 }
 
 func (c *Client) sendDirective(ctx context.Context, d directive) error {

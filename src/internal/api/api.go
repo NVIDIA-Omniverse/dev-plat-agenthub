@@ -189,6 +189,7 @@ func (s *Server) registerRoutes() {
 
 	// Bot-facing API routes (token-authenticated, not cookie-authenticated).
 	s.mux.HandleFunc("POST /api/register", s.handleRegister)
+	s.mux.HandleFunc("POST /api/tasks", s.handleBotTaskCreate)
 	s.mux.HandleFunc("POST /api/tasks/{id}/status", s.handleTaskStatusUpdate)
 
 	// Protected admin routes.
