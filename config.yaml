@@ -1,0 +1,81 @@
+# agenthub configuration
+# All tunable settings live here. No behavior is hard-coded.
+# Secrets (API keys, tokens, passwords) are NOT stored here —
+# they live in the encrypted store at store.path.
+
+server:
+  # HTTP listen address for the admin web UI and API
+  http_addr: ":8080"
+  # Read and write timeouts for HTTP connections
+  read_timeout: 30s
+  write_timeout: 30s
+  # Session cookie name
+  session_cookie_name: "agenthub_session"
+
+store:
+  # Path to the encrypted secrets store file.
+  # This file contains API keys, tokens, and the admin password hash.
+  # It is encrypted with AES-256-GCM using a key derived from the admin password.
+  path: "~/.agenthub/secrets.enc"
+
+slack:
+  # Use Socket Mode (recommended). Requires an App-Level Token (xapp-).
+  socket_mode: true
+  # How often to log Slack heartbeat status
+  heartbeat_interval: 60s
+  # Slash command prefix used in this workspace
+  command_prefix: "/agenthub"
+
+openclaw:
+  # Timeout for individual liveness HTTP requests
+  liveness_timeout: 10s
+  # How often to check all registered openclaw instances
+  liveness_interval: 60s
+  # Expected health endpoint path on each openclaw instance
+  health_path: "/health"
+  # Directive endpoint path on each openclaw instance
+  directives_path: "/directives"
+
+openai:
+  # Model to use for agenthub's own intelligence
+  # Recommended: gpt-4o-mini (fast, cost-effective for routing decisions)
+  model: "gpt-4o-mini"
+  # Maximum tokens per response
+  max_tokens: 1024
+  # System prompt for agenthub's OpenAI assistant
+  system_prompt: >
+    You are agenthub, a bot manager for a Slack workspace.
+    You help users check the status of their AI bots, list registered bots,
+    create and route work items, and answer questions about the bot ecosystem.
+    Be concise and helpful. Respond in plain text suitable for Slack.
+
+beads:
+  # Path to the Beads/Dolt database directory
+  db_path: ".beads/dolt"
+
+dolt:
+  # DSN for the Dolt SQL server (MySQL-compatible)
+  # Run: dolt sql-server in your Dolt database directory
+  dsn: "root:@tcp(127.0.0.1:3306)/agenthub"
+  # Maximum number of open database connections
+  max_open_conns: 10
+  # Maximum number of idle connections
+  max_idle_conns: 5
+  # Connection max lifetime
+  conn_max_lifetime: 5m
+
+log:
+  # Log level: debug, info, warn, error
+  level: "info"
+  # Log format: json, text
+  format: "json"
+
+kanban:
+  # Column names and order for the kanban board
+  # These must match the status values used in Beads issues
+  columns:
+    - "backlog"
+    - "ready"
+    - "in_progress"
+    - "review"
+    - "done"

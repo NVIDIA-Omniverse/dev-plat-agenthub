@@ -1,0 +1,13 @@
+{{template "layout.html" .}}
+{{define "title"}}Login — agenthub{{end}}
+{{define "content"}}
+<div class="login-wrap">
+    <h1>agenthub</h1>
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+    <form method="POST" action="/admin/login">
+        <label for="password">Admin Password</label>
+        <input type="password" id="password" name="password" autofocus required>
+        <button type="submit">Login</button>
+    </form>
+</div>
+{{end}}

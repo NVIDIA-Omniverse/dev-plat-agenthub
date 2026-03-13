@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{block "title" .}}agenthub{{end}}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+    <nav>
+        <a href="/admin/" class="brand">agenthub</a>
+        <a href="/admin/bots">Bots</a>
+        <a href="/admin/kanban">Kanban</a>
+        <a href="/admin/config">Config</a>
+        <a href="/admin/secrets">Secrets</a>
+        <form method="POST" action="/admin/logout" style="display:inline">
+            <button type="submit">Logout</button>
+        </form>
+    </nav>
+    <main>
+        {{block "content" .}}{{end}}
+    </main>
+</body>
+</html>

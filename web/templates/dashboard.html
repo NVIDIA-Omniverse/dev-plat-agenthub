@@ -1,0 +1,18 @@
+{{template "layout.html" .}}
+{{define "title"}}Dashboard — agenthub{{end}}
+{{define "content"}}
+<h1>Dashboard</h1>
+{{with .Data}}
+<div style="display:flex;gap:1rem;margin-bottom:1.5rem">
+    <div class="card">
+        <h2>{{.BotCount}}</h2>
+        <p>Registered Bots</p>
+    </div>
+    <div class="card">
+        <h2>{{.AliveCount}}</h2>
+        <p>Online Bots</p>
+    </div>
+</div>
+{{end}}
+<p><a href="/admin/bots">Manage Bots</a> · <a href="/admin/kanban">Kanban Board</a></p>
+{{end}}

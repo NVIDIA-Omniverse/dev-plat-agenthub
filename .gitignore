@@ -1,0 +1,16 @@
+# Build output
+agenthub
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Secrets / encrypted store
+*.enc
+
+# Local Claude Code config
+.claude/
+.mcp.json
+
+# OS
+.DS_Store

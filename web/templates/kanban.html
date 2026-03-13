@@ -1,0 +1,24 @@
+{{template "layout.html" .}}
+{{define "title"}}Kanban — agenthub{{end}}
+{{define "content"}}
+<h1>Kanban Board</h1>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+<div class="kanban" hx-get="/admin/kanban" hx-trigger="every 30s" hx-swap="outerHTML">
+{{with .Data}}
+{{range .Columns}}
+<div class="kanban-col">
+    <h3>{{.Status}} ({{len .Issues}})</h3>
+    {{range .Issues}}
+    <div class="kanban-card">
+        <div class="id">{{.ID}}</div>
+        <div>{{.Title}}</div>
+        {{if .Assignee}}<div style="font-size:0.8em;color:#888">→ {{.Assignee}}</div>{{end}}
+    </div>
+    {{else}}
+    <div style="color:#aaa;font-size:0.85em;padding:0.5rem">Empty</div>
+    {{end}}
+</div>
+{{end}}
+{{end}}
+</div>
+{{end}}
