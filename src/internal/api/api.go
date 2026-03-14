@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/auth"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/dolt"
@@ -707,17 +708,40 @@ func (s *Server) handleKanbanTaskAssign(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleKanbanAgents returns the agents pane fragment for the split kanban view.
+// An agent is shown as alive if it is marked alive in the DB OR if it has
+// sent a heartbeat within the last 2 minutes (outbound-only / cross-network agents).
 func (s *Server) handleKanbanAgents(w http.ResponseWriter, r *http.Request) {
 	type agentRow struct {
 		Name    string
 		IsAlive bool
 	}
+
+	const heartbeatWindow = 2 * time.Minute
+	now := time.Now().UTC()
+
+	// Build a set of recently-heartbeating bot names.
+	recent := map[string]bool{}
+	for _, bs := range s.heartbeats.All() {
+		if now.Sub(bs.LastSeen) <= heartbeatWindow {
+			recent[bs.BotName] = true
+		}
+	}
+
+	seen := map[string]bool{}
 	var rows []agentRow
 	if s.db != nil {
 		if insts, err := s.db.ListAllInstances(r.Context()); err == nil {
 			for _, inst := range insts {
-				rows = append(rows, agentRow{Name: inst.Name, IsAlive: inst.IsAlive})
+				alive := inst.IsAlive || recent[inst.Name]
+				rows = append(rows, agentRow{Name: inst.Name, IsAlive: alive})
+				seen[inst.Name] = true
 			}
+		}
+	}
+	// Show heartbeating agents that aren't in the DB yet (not yet registered).
+	for name := range recent {
+		if !seen[name] {
+			rows = append(rows, agentRow{Name: name, IsAlive: true})
 		}
 	}
 	s.renderFragment(w, "kanban-agents", pageData{Data: rows})
