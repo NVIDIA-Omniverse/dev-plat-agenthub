@@ -1,0 +1,116 @@
+{{template "layout.html" .}}
+{{define "title"}}{{with .Data}}{{.Task.Title}}{{end}} — agenthub{{end}}
+{{define "content"}}
+<div class="page-header">
+    <h1>{{with .Data}}{{.Task.ID}}{{end}}</h1>
+    <a href="/admin/kanban" class="btn-secondary btn-sm">← Kanban</a>
+</div>
+{{template "task-detail-panel" .}}
+{{end}}
+{{define "task-detail-panel"}}
+{{with .Data}}
+<div class="task-detail-panel">
+<form id="task-detail-form"
+      hx-post="/admin/kanban/tasks/{{.Task.ID}}"
+      hx-target="#task-panel-inner"
+      hx-swap="innerHTML">
+
+    <div class="task-detail-header">
+        <span class="task-detail-id">{{.Task.ID}}</span>
+        {{if .Task.CreatedAt}}<span class="task-detail-meta">Created {{.Task.CreatedAt}}{{if .Task.CreatedBy}} by {{.Task.CreatedBy}}{{end}}</span>{{end}}
+        {{if .Task.UpdatedAt}}<span class="task-detail-meta">Updated {{.Task.UpdatedAt}}</span>{{end}}
+    </div>
+
+    <label>Title *</label>
+    <input type="text" name="title" value="{{.Task.Title}}" required autofocus>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem">
+        <div>
+            <label>Status</label>
+            <select name="status">
+                {{range .Columns}}
+                <option value="{{.}}"{{if eq . $.Data.Task.Status}} selected{{end}}>{{humanStatus .}}</option>
+                {{end}}
+            </select>
+        </div>
+        <div>
+            <label>Priority</label>
+            <select name="priority">
+                {{range .Priorities}}
+                <option value="{{.Value}}"{{if eq .Value $.Data.Task.Priority}} selected{{end}}>{{.Label}}</option>
+                {{end}}
+            </select>
+        </div>
+        <div>
+            <label>Type</label>
+            <select name="issue_type">
+                {{range .IssueTypes}}
+                <option value="{{.Value}}"{{if eq .Value $.Data.Task.IssueType}} selected{{end}}>{{.Label}}</option>
+                {{end}}
+            </select>
+        </div>
+    </div>
+
+    <label>Description</label>
+    <textarea name="description" rows="4">{{.Task.Description}}</textarea>
+
+    <label>Acceptance Criteria</label>
+    <textarea name="acceptance_criteria" rows="3">{{.Task.AcceptanceCriteria}}</textarea>
+
+    <label>Notes</label>
+    <textarea name="notes" rows="2">{{.Task.Notes}}</textarea>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem">
+        <div>
+            <label>Assignee</label>
+            <input type="text" name="assignee" value="{{.Task.Assignee}}" placeholder="bot or person">
+        </div>
+        <div>
+            <label>Estimated (minutes)</label>
+            <input type="number" name="estimated_minutes" value="{{if .Task.EstimatedMinutes}}{{.Task.EstimatedMinutes}}{{end}}" min="0" step="1">
+        </div>
+        <div>
+            <label>Due Date</label>
+            <input type="date" name="due_at" value="{{.Task.DueAt}}">
+        </div>
+    </div>
+
+    <label>Labels <small style="text-transform:none;font-weight:400">(comma-separated)</small></label>
+    <input type="text" name="labels" value="{{.Task.Labels}}" placeholder="backend, urgent">
+
+    <div class="task-detail-actions" id="task-detail-actions">
+        <button type="submit" class="btn-primary save-btn" style="width:auto;display:none">Save</button>
+        <button type="button" class="btn-secondary cancel-btn" style="display:none" onclick="taskPanelReset()">Cancel</button>
+        <button type="button" class="btn-secondary close-btn" onclick="closeTaskPanel()">Close</button>
+    </div>
+</form>
+</div>
+<script>
+(function() {
+    var form = document.getElementById('task-detail-form');
+    if (!form) return;
+    var saveBtn  = form.querySelector('.save-btn');
+    var cancelBtn = form.querySelector('.cancel-btn');
+    var closeBtn  = form.querySelector('.close-btn');
+    var dirty = false;
+    function markDirty() {
+        if (dirty) return;
+        dirty = true;
+        saveBtn.style.display  = '';
+        cancelBtn.style.display = '';
+        closeBtn.style.display  = 'none';
+    }
+    form.addEventListener('input', markDirty);
+    form.addEventListener('change', markDirty);
+    window.taskPanelReset = function() {
+        form.reset();
+        dirty = false;
+        saveBtn.style.display  = 'none';
+        cancelBtn.style.display = 'none';
+        closeBtn.style.display  = '';
+    };
+    // After HTMX saves successfully, panel content is replaced — dirty state resets naturally.
+})();
+</script>
+{{end}}
+{{end}}

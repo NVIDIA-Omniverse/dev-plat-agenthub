@@ -151,6 +151,51 @@ func (c *Client) CloseTask(ctx context.Context, issueID, reason, actor string) e
 	return nil
 }
 
+// UpdateFields updates the editable fields of an existing issue.
+// Any field with a zero value is still written (clearing it); only empty title is skipped.
+func (c *Client) UpdateFields(ctx context.Context, issueID, title, description, status string,
+	priority int, issueType, assignee string, estimatedMins int,
+	acceptanceCriteria, notes, dueAt, labels, actor string) error {
+
+	updates := map[string]interface{}{
+		"description":         description,
+		"priority":            priority,
+		"assignee":            assignee,
+		"acceptance_criteria": acceptanceCriteria,
+		"notes":               notes,
+	}
+	if title != "" {
+		updates["title"] = title
+	}
+	if status != "" {
+		updates["status"] = beadslib.Status(status)
+	}
+	if issueType != "" {
+		updates["issue_type"] = beadslib.IssueType(issueType)
+	}
+	if estimatedMins > 0 {
+		updates["estimated_minutes"] = estimatedMins
+	}
+	if dueAt != "" {
+		if t, err := time.Parse("2006-01-02", dueAt); err == nil {
+			updates["due_at"] = &t
+		}
+	}
+	if labels != "" {
+		var ls []string
+		for _, l := range strings.Split(labels, ",") {
+			if l = strings.TrimSpace(l); l != "" {
+				ls = append(ls, l)
+			}
+		}
+		updates["labels"] = ls
+	}
+	if err := c.storage.UpdateIssue(ctx, issueID, updates, actor); err != nil {
+		return fmt.Errorf("updating task %q: %w", issueID, err)
+	}
+	return nil
+}
+
 // GetTask returns a single issue by ID.
 func (c *Client) GetTask(ctx context.Context, issueID string) (*beadslib.Issue, error) {
 	issue, err := c.storage.GetIssue(ctx, issueID)

@@ -448,7 +448,7 @@ func loadTemplates() (map[string]*template.Template, error) {
 	funcs := template.FuncMap{"humanStatus": humanStatus}
 	pages := []string{
 		"login.html", "setup.html", "dashboard.html",
-		"bots.html", "kanban.html", "secrets.html", "task-create.html",
+		"bots.html", "kanban.html", "secrets.html", "task-create.html", "task-detail.html",
 	}
 	out := make(map[string]*template.Template, len(pages)+1)
 	for _, page := range pages {
@@ -459,7 +459,9 @@ func loadTemplates() (map[string]*template.Template, error) {
 		out[page] = t
 	}
 	// Alias HTMX fragment names to their parent page template sets.
-	out["bots-table"] = out["bots.html"]
+	out["bots-table"]        = out["bots.html"]
+	out["task-create-panel"] = out["task-create.html"]
+	out["task-detail-panel"] = out["task-detail.html"]
 	return out, nil
 }
 
@@ -553,7 +555,34 @@ func (m *beadsTaskManager) GetTask(ctx context.Context, id string) (api.TaskReco
 	if err != nil {
 		return api.TaskRecord{}, err
 	}
-	return api.TaskRecord{ID: issue.ID, Title: issue.Title, Status: string(issue.Status)}, nil
+	rec := api.TaskRecord{
+		ID:                 issue.ID,
+		Title:              issue.Title,
+		Status:             string(issue.Status),
+		Description:        issue.Description,
+		Priority:           issue.Priority,
+		IssueType:          string(issue.IssueType),
+		Assignee:           issue.Assignee,
+		AcceptanceCriteria: issue.AcceptanceCriteria,
+		Notes:              issue.Notes,
+		Labels:             strings.Join(issue.Labels, ", "),
+		CreatedBy:          issue.CreatedBy,
+		CreatedAt:          issue.CreatedAt.Format("2006-01-02 15:04 UTC"),
+		UpdatedAt:          issue.UpdatedAt.Format("2006-01-02 15:04 UTC"),
+	}
+	if issue.EstimatedMinutes != nil {
+		rec.EstimatedMinutes = *issue.EstimatedMinutes
+	}
+	if issue.DueAt != nil {
+		rec.DueAt = issue.DueAt.Format("2006-01-02")
+	}
+	return rec, nil
+}
+
+func (m *beadsTaskManager) UpdateTask(ctx context.Context, issueID string, req api.TaskUpdateRequest) error {
+	return m.client.UpdateFields(ctx, issueID, req.Title, req.Description, req.Status,
+		req.Priority, req.IssueType, req.Assignee, req.EstimatedMinutes,
+		req.AcceptanceCriteria, req.Notes, req.DueAt, req.Labels, req.Actor)
 }
 
 // AddLog implements api.TaskLogger by appending a comment to the beads issue.

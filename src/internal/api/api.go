@@ -61,12 +61,23 @@ type KanbanBuilder interface {
 	Build(ctx context.Context) (*kanban.Board, error)
 }
 
-// TaskRecord is a minimal representation of an issue returned by TaskManager
-// to avoid importing beadslib into the api package.
+// TaskRecord is the full representation of an issue returned by TaskManager.
 type TaskRecord struct {
-	ID     string
-	Title  string
-	Status string
+	ID                 string
+	Title              string
+	Status             string
+	Description        string
+	Priority           int
+	IssueType          string
+	Assignee           string
+	EstimatedMinutes   int
+	AcceptanceCriteria string
+	Notes              string
+	DueAt              string // "YYYY-MM-DD" or ""
+	Labels             string // comma-separated
+	CreatedAt          string
+	UpdatedAt          string
+	CreatedBy          string
 }
 
 // TaskCreateRequest carries all user-editable fields for creating a new task.
@@ -86,12 +97,29 @@ type TaskCreateRequest struct {
 	Actor              string
 }
 
+// TaskUpdateRequest carries editable fields for updating an existing task.
+type TaskUpdateRequest struct {
+	Title              string
+	Description        string
+	Status             string
+	Priority           int
+	IssueType          string
+	Assignee           string
+	EstimatedMinutes   int
+	AcceptanceCriteria string
+	Notes              string
+	DueAt              string
+	Labels             string
+	Actor              string
+}
+
 // TaskManager handles task creation and status updates for the kanban board
 // and the bot task-status callback endpoint.
 type TaskManager interface {
 	UpdateStatus(ctx context.Context, issueID, newStatus, note, actor string) error
 	GetTask(ctx context.Context, issueID string) (TaskRecord, error)
 	CreateTask(ctx context.Context, req TaskCreateRequest) (TaskRecord, error)
+	UpdateTask(ctx context.Context, issueID string, req TaskUpdateRequest) error
 }
 
 // --------------------------------------------------------------------------
@@ -259,6 +287,8 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /admin/kanban/tasks/new", protected(http.HandlerFunc(s.handleKanbanTaskNew)))
 	s.mux.Handle("POST /admin/kanban/tasks", protected(http.HandlerFunc(s.handleKanbanTaskCreate)))
 	s.mux.Handle("POST /admin/kanban/tasks/{id}/status", protected(http.HandlerFunc(s.handleKanbanTaskStatus)))
+	s.mux.Handle("GET /admin/kanban/tasks/{id}", protected(http.HandlerFunc(s.handleKanbanTaskDetail)))
+	s.mux.Handle("POST /admin/kanban/tasks/{id}", protected(http.HandlerFunc(s.handleKanbanTaskUpdate)))
 	s.mux.Handle("GET /admin/secrets", protected(http.HandlerFunc(s.handleSecretsPage)))
 	s.mux.Handle("POST /admin/secrets", protected(http.HandlerFunc(s.handleSecretsSubmit)))
 	s.mux.Handle("GET /admin/events", protected(http.HandlerFunc(s.handleAdminEvents)))
@@ -465,29 +495,18 @@ func (s *Server) handleKanbanTaskStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleKanbanTaskNew renders the full task-creation form.
+// Returns an HTMX fragment if called with HX-Request header; full page otherwise.
 func (s *Server) handleKanbanTaskNew(w http.ResponseWriter, r *http.Request) {
-	type createData struct {
-		Columns    []string
-		IssueTypes []struct{ Value, Label string }
-		Priorities []struct {
-			Value int
-			Label string
-		}
+	d := s.taskFormData()
+	// Pre-fill status if provided via query param (column quick-add).
+	if st := r.URL.Query().Get("status"); st != "" {
+		d.Task.Status = st
 	}
-	data := createData{
-		Columns: s.kanbanColumns,
-		IssueTypes: []struct{ Value, Label string }{
-			{"task", "Task"}, {"bug", "Bug"}, {"feature", "Feature"},
-			{"epic", "Epic"}, {"chore", "Chore"},
-		},
-		Priorities: []struct {
-			Value int
-			Label string
-		}{
-			{0, "Critical"}, {1, "High"}, {2, "Normal"}, {3, "Low"},
-		},
+	if r.Header.Get("HX-Request") == "true" {
+		s.renderFragment(w, "task-create-panel", pageData{Data: d})
+	} else {
+		s.render(w, "task-create.html", pageData{Title: "New Task", Data: d})
 	}
-	s.render(w, "task-create.html", pageData{Title: "New Task", Data: data})
 }
 
 func (s *Server) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Request) {
@@ -532,7 +551,114 @@ func (s *Server) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Request) 
 	} else {
 		s.events.Broadcast("kanban-update", task.ID)
 	}
-	http.Redirect(w, r, "/admin/kanban", http.StatusSeeOther)
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Trigger", `{"kanban-update":"","close-panel":""}`)
+		w.WriteHeader(http.StatusNoContent)
+	} else {
+		http.Redirect(w, r, "/admin/kanban", http.StatusSeeOther)
+	}
+}
+
+type taskFormData struct {
+	Task       TaskRecord
+	Columns    []string
+	IssueTypes []struct{ Value, Label string }
+	Priorities []struct {
+		Value int
+		Label string
+	}
+}
+
+func (s *Server) taskFormData() taskFormData {
+	return taskFormData{
+		Columns: s.kanbanColumns,
+		IssueTypes: []struct{ Value, Label string }{
+			{"task", "Task"}, {"bug", "Bug"}, {"feature", "Feature"},
+			{"epic", "Epic"}, {"chore", "Chore"},
+		},
+		Priorities: []struct {
+			Value int
+			Label string
+		}{
+			{0, "Critical"}, {1, "High"}, {2, "Normal"}, {3, "Low"},
+		},
+	}
+}
+
+// handleKanbanTaskDetail returns the task detail panel (HTMX fragment or full page).
+func (s *Server) handleKanbanTaskDetail(w http.ResponseWriter, r *http.Request) {
+	if s.taskManager == nil {
+		http.NotFound(w, r)
+		return
+	}
+	id := r.PathValue("id")
+	task, err := s.taskManager.GetTask(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	d := s.taskFormData()
+	d.Task = task
+	if r.Header.Get("HX-Request") == "true" {
+		s.renderFragment(w, "task-detail-panel", pageData{Data: d})
+	} else {
+		s.render(w, "task-detail.html", pageData{Title: task.Title, Data: d})
+	}
+}
+
+// handleKanbanTaskUpdate saves changes to an existing task.
+func (s *Server) handleKanbanTaskUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.taskManager == nil {
+		http.Error(w, "task manager not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	id := r.PathValue("id")
+	priority := 2
+	if p, err := strconv.Atoi(r.FormValue("priority")); err == nil {
+		priority = p
+	}
+	estMins := 0
+	if e, err := strconv.Atoi(r.FormValue("estimated_minutes")); err == nil && e > 0 {
+		estMins = e
+	}
+	req := TaskUpdateRequest{
+		Title:              r.FormValue("title"),
+		Description:        r.FormValue("description"),
+		Status:             r.FormValue("status"),
+		Priority:           priority,
+		IssueType:          r.FormValue("issue_type"),
+		Assignee:           r.FormValue("assignee"),
+		EstimatedMinutes:   estMins,
+		AcceptanceCriteria: r.FormValue("acceptance_criteria"),
+		Notes:              r.FormValue("notes"),
+		DueAt:              r.FormValue("due_at"),
+		Labels:             r.FormValue("labels"),
+		Actor:              "admin",
+	}
+	if err := s.taskManager.UpdateTask(r.Context(), id, req); err != nil {
+		slog.Error("updating kanban task", "id", id, "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.events.Broadcast("kanban-update", id)
+	if r.Header.Get("HX-Request") == "true" {
+		// Return updated panel content so the modal can show the saved state.
+		task, err := s.taskManager.GetTask(r.Context(), id)
+		if err != nil {
+			w.Header().Set("HX-Trigger", "kanban-update")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		d := s.taskFormData()
+		d.Task = task
+		s.renderFragment(w, "task-detail-panel", pageData{Data: d})
+	} else {
+		http.Redirect(w, r, "/admin/kanban", http.StatusSeeOther)
+	}
 }
 
 func (s *Server) handleSecretsPage(w http.ResponseWriter, r *http.Request) {

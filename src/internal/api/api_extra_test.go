@@ -59,6 +59,9 @@ type mockTaskManager struct {
 }
 
 func (m *mockTaskManager) UpdateStatus(_ context.Context, _, _, _, _ string) error { return m.err }
+func (m *mockTaskManager) UpdateTask(_ context.Context, _ string, _ TaskUpdateRequest) error {
+	return m.err
+}
 func (m *mockTaskManager) GetTask(_ context.Context, _ string) (TaskRecord, error) {
 	return m.record, m.err
 }

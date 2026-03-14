@@ -6,8 +6,14 @@
     <a href="/admin/kanban" class="btn-secondary btn-sm">← Kanban</a>
 </div>
 {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-<div class="card" style="max-width:720px">
-<form method="POST" action="/admin/kanban/tasks">
+{{template "task-create-panel" .}}
+{{end}}
+{{define "task-create-panel"}}
+<div class="task-detail-panel">
+<form hx-post="/admin/kanban/tasks"
+      hx-target="#task-panel-inner"
+      hx-swap="innerHTML"
+      method="POST" action="/admin/kanban/tasks">
 
     <label>Title *</label>
     <input type="text" name="title" required autofocus placeholder="What needs to be done?">
@@ -17,7 +23,7 @@
             <label>Status</label>
             <select name="status">
                 {{range .Data.Columns}}
-                <option value="{{.}}">{{humanStatus .}}</option>
+                <option value="{{.}}"{{if $.Data}}{{if eq . $.Data.Task.Status}} selected{{end}}{{end}}>{{humanStatus .}}</option>
                 {{end}}
             </select>
         </div>
@@ -66,9 +72,9 @@
     <label>Labels <small style="text-transform:none;font-weight:400">(comma-separated)</small></label>
     <input type="text" name="labels" placeholder="backend, urgent, needs-review">
 
-    <div style="display:flex;gap:0.75rem;margin-top:0.5rem">
+    <div class="task-detail-actions">
         <button type="submit" class="btn-primary" style="width:auto">Create Task</button>
-        <a href="/admin/kanban" class="btn-secondary">Cancel</a>
+        <button type="button" class="btn-secondary" onclick="closeTaskPanel()">Cancel</button>
     </div>
 
 </form>

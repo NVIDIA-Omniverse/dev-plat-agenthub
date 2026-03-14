@@ -4,9 +4,20 @@
 <div class="page-header">
     <h1>Kanban Board</h1>
     <span class="htmx-indicator" id="kanban-spinner">Refreshing…</span>
-    <a href="/admin/kanban/tasks/new" class="btn-primary btn-sm">+ New Task</a>
+    <button class="btn-primary btn-sm"
+            hx-get="/admin/kanban/tasks/new"
+            hx-target="#task-panel-inner"
+            hx-swap="innerHTML"
+            onclick="openTaskPanel()">+ New Task</button>
 </div>
 {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+<!-- Slide-over task panel -->
+<div id="task-overlay" class="task-overlay" onclick="closeTaskPanel()"></div>
+<div id="task-panel" class="task-panel">
+    <div id="task-panel-inner"></div>
+</div>
+
 <div id="kanban-container">
 <div class="kanban">
 {{with .Data}}
@@ -18,7 +29,11 @@
     </h3>
     <div class="kanban-cards">
     {{range .Issues}}
-    <div class="kanban-card">
+    <div class="kanban-card"
+         hx-get="/admin/kanban/tasks/{{.ID}}"
+         hx-target="#task-panel-inner"
+         hx-swap="innerHTML"
+         onclick="openTaskPanel()">
         <div class="card-id">{{.ID}}</div>
         <div class="card-title">{{.Title}}</div>
         {{if .Assignee}}<div class="card-assignee">→ {{.Assignee}}</div>{{end}}
@@ -28,14 +43,11 @@
     {{end}}
     </div>
     <div class="kanban-add-form">
-        <form hx-post="/admin/kanban/tasks"
-              hx-target="#kanban-container"
-              hx-swap="innerHTML"
-              hx-select=".kanban">
-            <input type="hidden" name="status" value="{{.Status}}">
-            <input type="text" name="title" placeholder="New task…" required>
-            <button type="submit" class="btn-secondary btn-sm">+ Add</button>
-        </form>
+        <button class="btn-secondary btn-sm kanban-add-btn"
+                hx-get="/admin/kanban/tasks/new?status={{.Status}}"
+                hx-target="#task-panel-inner"
+                hx-swap="innerHTML"
+                onclick="openTaskPanel()">+ Add</button>
     </div>
 </div>
 {{end}}
@@ -44,8 +56,28 @@
 </div>
 <script>
 (function() {
-    // Replace 30-second HTMX polling with SSE for real-time kanban updates.
-    // Falls back gracefully if SSE is not supported or the connection drops.
+    var overlay = document.getElementById('task-overlay');
+    var panel   = document.getElementById('task-panel');
+
+    window.openTaskPanel = function() {
+        overlay.classList.add('active');
+        panel.classList.add('active');
+    };
+    window.closeTaskPanel = function() {
+        overlay.classList.remove('active');
+        panel.classList.remove('active');
+        document.getElementById('task-panel-inner').innerHTML = '';
+    };
+
+    // Close panel on ESC key.
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeTaskPanel();
+    });
+
+    // Server signals panel-close via HX-Trigger response header (after task create).
+    document.body.addEventListener('close-panel', closeTaskPanel);
+
+    // SSE for real-time kanban updates.
     var sse = new EventSource('/admin/events');
     function refreshKanban() {
         var spinner = document.getElementById('kanban-spinner');
@@ -60,9 +92,7 @@
     }
     sse.addEventListener('kanban-update', refreshKanban);
     sse.addEventListener('task-log', refreshKanban);
-    sse.onerror = function() {
-        // Connection dropped; SSE will auto-reconnect. No action needed.
-    };
+    sse.onerror = function() {};
 })();
 </script>
 {{end}}

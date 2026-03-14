@@ -23,6 +23,9 @@ type spyTaskManager struct {
 }
 
 func (m *spyTaskManager) UpdateStatus(_ context.Context, _, _, _, _ string) error { return m.err }
+func (m *spyTaskManager) UpdateTask(_ context.Context, _ string, _ TaskUpdateRequest) error {
+	return m.err
+}
 func (m *spyTaskManager) GetTask(_ context.Context, _ string) (TaskRecord, error) {
 	return m.record, m.err
 }
