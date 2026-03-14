@@ -8,6 +8,7 @@ package beads
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	beadslib "github.com/steveyegge/beads"
@@ -32,9 +33,13 @@ type Client struct {
 	storage Storage
 }
 
-// New opens a Beads database at dbPath (creating it if missing) and returns a Client.
+// New opens a Beads database rooted at dbPath (creating it if missing) and returns a Client.
+// dbPath is the dolt subdirectory (e.g. ".beads/dolt"); the parent .beads directory is derived
+// automatically and passed to OpenFromConfig so that server-mode settings in metadata.json are
+// respected and the Dolt server port is properly resolved.
 func New(ctx context.Context, dbPath string) (*Client, error) {
-	s, err := beadslib.Open(ctx, dbPath)
+	beadsDir := filepath.Dir(dbPath)
+	s, err := beadslib.OpenFromConfig(ctx, beadsDir)
 	if err != nil {
 		return nil, fmt.Errorf("opening beads db at %q: %w", dbPath, err)
 	}

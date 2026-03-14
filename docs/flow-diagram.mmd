@@ -1,0 +1,54 @@
+flowchart LR
+
+    subgraph Planning
+        K[Kanban / Intake]
+        TG[Traffic Generator]
+        BJ[Job Runner]
+        K --> TG
+        TG --> BJ
+    end
+
+    subgraph Sources
+        R1[(Repo 1)]
+        R2[(Repo 2)]
+        R3[(Repo 3)]
+        J[Jenkins]
+
+        BJ --> R1
+        BJ --> R2
+        BJ --> R3
+
+        R1 --> J
+        R2 --> J
+        R3 --> J
+    end
+
+    subgraph "AI / Model Pipeline"
+        PM[Prompt / Model Orchestrator]
+        ST[Shared State]
+        A1[Agent 1]
+        A2[Agent 2]
+        A3[Agent 3]
+
+        PM --> ST
+        PM --> A1
+        A1 --> A2
+        A2 --> A3
+
+        ST --> A1
+        ST --> A2
+        ST --> A3
+    end
+
+    subgraph Delivery
+        FE[Frontend]
+        OUT[Outputs / Adapters]
+        Q[Queue / Storage]
+
+        A2 --> FE
+        A3 --> FE
+        FE --> OUT
+        FE --> Q
+    end
+
+    K <--> PM
