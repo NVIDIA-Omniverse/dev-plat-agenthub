@@ -68,7 +68,10 @@ openai:
     - Respond in plain text suitable for Slack (no markdown headers).
 
 beads:
-  # Path to the Beads/Dolt database directory
+  # Path to the Beads/Dolt database directory.
+  # On the Azure VM, WorkingDirectory=/home/jordanh so ".beads/dolt" resolves to
+  # /home/jordanh/.beads/dolt — served by beads-dolt.service on 127.0.0.1:42251.
+  # Server-mode settings live in ~/.beads/metadata.json (not committed — machine-specific).
   db_path: ".beads/dolt"
 
 dolt:

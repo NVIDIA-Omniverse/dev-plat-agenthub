@@ -19,18 +19,58 @@
    same commit (update MEMORY.md, stage it, then commit everything together).
    The log is append-only; never edit past entries.
 
+## Commandment 6 — Always Check Pending Work Before Starting
+
+6. **Before writing any code or starting any task, check for open work:**
+
+   ```bash
+   # On the VM (or with SSH):
+   bd list                         # show all open beads issues
+   gh issue list --repo NVIDIA-DevPlat/agenthub   # show open GitHub issues
+   ```
+
+   Report the pending work to the user before starting your own experiments,
+   so nothing is duplicated and higher-priority issues are not overlooked.
+   This applies to humans and agents alike.
+
 ## Work Tracking
 
 This project uses [Beads](https://github.com/steveyegge/beads) for task management, backed by Dolt.
-All planned work items are tracked as Beads issues in `.beads/dolt/`.
+The beads data lives on the Azure VM at `/home/jordanh/.beads/dolt/` and is served by the
+`beads-dolt.service` systemd unit (dolt SQL server at `127.0.0.1:42251`).
 
-Useful commands:
-```
+Beads is configured in **server mode** via `~/.beads/metadata.json`. Agenthub connects to it
+automatically; the `bd` CLI also reads this file so it connects to the same data.
+
+Useful `bd` commands:
+```bash
 bd list              # show all open issues
 bd show <id>         # show a specific issue
-bd add "title"       # create a new issue
+bd create "title"    # create a new issue
 bd close <id>        # close an issue
+bd q "title"         # quick capture (outputs only the ID)
 ```
+
+To file a GitHub issue directly:
+```bash
+gh issue create --repo NVIDIA-DevPlat/agenthub --title "..." --body "..."
+```
+
+### Installing `bd` on a new machine
+
+On the VM (requires CGO, dolt libraries):
+```bash
+CGO_ENABLED=1 /usr/local/go/bin/go install github.com/steveyegge/beads/cmd/bd@v0.60.0
+sudo cp ~/go/bin/bd /usr/local/bin/bd
+```
+
+On macOS (local dev):
+```bash
+go install github.com/steveyegge/beads/cmd/bd@v0.60.0
+```
+
+The `~/.beads/metadata.json` file in the home directory on the VM points `bd` to the remote
+dolt server automatically. On local dev machines, `bd` connects to the local dolt instance.
 
 Phase plans are also saved as markdown files in `plans/`.
 
