@@ -1,0 +1,71 @@
+{{template "layout.html" .}}
+{{define "title"}}Projects — agenthub{{end}}
+{{define "content"}}
+<div class="page-header">
+    <h1>Projects</h1>
+</div>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+{{if .Success}}<p class="success">{{.Success}}</p>{{end}}
+
+<section class="card">
+    <h2>Create Project</h2>
+    <form method="POST" action="/admin/projects">
+        <div class="form-row">
+            <label>Name<br>
+                <input type="text" name="name" required placeholder="e.g. usdagent">
+            </label>
+            <label>Beads Prefix<br>
+                <input type="text" name="beads_prefix" placeholder="AH" maxlength="8">
+            </label>
+        </div>
+        <div class="form-row">
+            <label style="width:100%">Description<br>
+                <input type="text" name="description" placeholder="One-line description">
+            </label>
+        </div>
+        <details>
+            <summary>Attach a new GitHub repo resource</summary>
+            <div class="form-row" style="margin-top:0.5rem">
+                <label>Repo name<br>
+                    <input type="text" name="new_resource_name" placeholder="org/repo">
+                </label>
+                <label>Clone URL<br>
+                    <input type="text" name="new_resource_clone_url" placeholder="https://github.com/org/repo.git">
+                </label>
+                <label>Access Token<br>
+                    <input type="password" name="new_resource_token" placeholder="ghp_...">
+                </label>
+            </div>
+        </details>
+        <button type="submit" class="btn-primary" style="margin-top:1rem">Create Project</button>
+    </form>
+</section>
+
+<section class="card">
+    <h2>Projects</h2>
+    {{with .Data}}
+    {{with .Projects}}
+    <table>
+        <thead>
+            <tr><th>Name</th><th>Beads Prefix</th><th>Slack Channel</th><th>Description</th><th>Created</th></tr>
+        </thead>
+        <tbody>
+        {{range .}}
+        <tr>
+            <td><a href="/admin/projects/{{.ID}}">{{.Name}}</a></td>
+            <td><span class="badge">{{.BeadsPrefix}}</span></td>
+            <td>{{if .SlackChannelName}}#{{.SlackChannelName}}{{else}}<span class="muted">—</span>{{end}}</td>
+            <td class="small">{{.Description}}</td>
+            <td class="small">{{.CreatedAt.Format "2006-01-02"}}</td>
+        </tr>
+        {{end}}
+        </tbody>
+    </table>
+    {{else}}
+    <p class="muted">No projects yet.</p>
+    {{end}}
+    {{else}}
+    <p class="muted">No projects yet.</p>
+    {{end}}
+</section>
+{{end}}

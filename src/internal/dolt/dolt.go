@@ -129,6 +129,92 @@ var migrations = []migration{
 			PRIMARY KEY (bot_id)
 		)`,
 	},
+	{
+		Name: "003_create_users",
+		SQL: `CREATE TABLE IF NOT EXISTS users (
+			id           VARCHAR(36)  NOT NULL,
+			username     VARCHAR(64)  NOT NULL,
+			email        VARCHAR(255) NOT NULL DEFAULT '',
+			role         VARCHAR(32)  NOT NULL DEFAULT 'user',
+			api_token    VARCHAR(64)  NOT NULL DEFAULT '',
+			created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			UNIQUE KEY uq_username (username)
+		)`,
+	},
+	{
+		Name: "004_create_resources",
+		SQL: `CREATE TABLE IF NOT EXISTS resources (
+			id            VARCHAR(36)  NOT NULL,
+			owner_id      VARCHAR(36)  NOT NULL,
+			resource_type VARCHAR(64)  NOT NULL,
+			name          VARCHAR(255) NOT NULL,
+			resource_meta JSON         NOT NULL DEFAULT ('{}'),
+			created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			KEY idx_resources_owner (owner_id)
+		)`,
+	},
+	{
+		Name: "005_create_projects",
+		SQL: `CREATE TABLE IF NOT EXISTS projects (
+			id                 VARCHAR(36)  NOT NULL,
+			owner_id           VARCHAR(36)  NOT NULL,
+			name               VARCHAR(255) NOT NULL,
+			description        TEXT         NOT NULL DEFAULT '',
+			slack_channel_id   VARCHAR(64)  NOT NULL DEFAULT '',
+			slack_channel_name VARCHAR(255) NOT NULL DEFAULT '',
+			beads_prefix       VARCHAR(16)  NOT NULL DEFAULT 'AH',
+			created_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			KEY idx_projects_owner (owner_id)
+		)`,
+	},
+	{
+		Name: "006_create_project_resources",
+		SQL: `CREATE TABLE IF NOT EXISTS project_resources (
+			project_id  VARCHAR(36)  NOT NULL,
+			resource_id VARCHAR(36)  NOT NULL,
+			is_primary  TINYINT(1)   NOT NULL DEFAULT 0,
+			added_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (project_id, resource_id)
+		)`,
+	},
+	{
+		Name: "007_alter_openclaw_instances",
+		SQL: `ALTER TABLE openclaw_instances
+			ADD COLUMN IF NOT EXISTS user_id     VARCHAR(36)  NOT NULL DEFAULT '',
+			ADD COLUMN IF NOT EXISTS description TEXT         NOT NULL DEFAULT '',
+			ADD COLUMN IF NOT EXISTS skills      JSON         NOT NULL DEFAULT ('[]')`,
+	},
+	{
+		Name: "008_create_project_agents",
+		SQL: `CREATE TABLE IF NOT EXISTS project_agents (
+			project_id VARCHAR(36)  NOT NULL,
+			agent_id   VARCHAR(36)  NOT NULL,
+			granted_by VARCHAR(36)  NOT NULL DEFAULT '',
+			granted_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (project_id, agent_id)
+		)`,
+	},
+	{
+		Name: "009_create_task_assignments",
+		SQL: `CREATE TABLE IF NOT EXISTS task_assignments (
+			id          VARCHAR(36)  NOT NULL,
+			task_id     VARCHAR(64)  NOT NULL,
+			project_id  VARCHAR(36)  NOT NULL DEFAULT '',
+			agent_id    VARCHAR(36)  NOT NULL,
+			assigned_by VARCHAR(36)  NOT NULL DEFAULT '',
+			assigned_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			revoked_at  TIMESTAMP    NULL,
+			PRIMARY KEY (id),
+			KEY idx_ta_task (task_id),
+			KEY idx_ta_agent (agent_id)
+		)`,
+	},
 }
 
 // Instance represents a registered openclaw bot.

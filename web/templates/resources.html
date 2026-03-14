@@ -1,0 +1,68 @@
+{{template "layout.html" .}}
+{{define "title"}}Resources — agenthub{{end}}
+{{define "content"}}
+<div class="page-header">
+    <h1>Resources</h1>
+</div>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+{{if .Success}}<p class="success">{{.Success}}</p>{{end}}
+
+<section class="card">
+    <h2>Add Resource</h2>
+    <form method="POST" action="/admin/resources">
+        <div class="form-row">
+            <label>Name<br>
+                <input type="text" name="name" required placeholder="e.g. usdagent repo">
+            </label>
+            <label>Type<br>
+                <select name="resource_type" required>
+                    <option value="github_repo">GitHub Repo</option>
+                    <option value="artifactory">Artifactory</option>
+                    <option value="google_drive">Google Drive</option>
+                    <option value="onedrive">OneDrive</option>
+                    <option value="icloud">iCloud</option>
+                </select>
+            </label>
+        </div>
+        <div class="form-row">
+            <label>Clone URL (GitHub)<br>
+                <input type="text" name="clone_url" placeholder="https://github.com/org/repo.git">
+            </label>
+            <label>URL<br>
+                <input type="text" name="url" placeholder="https://...">
+            </label>
+        </div>
+        <div class="form-row">
+            <label>Access Token / API Key<br>
+                <input type="password" name="token" placeholder="ghp_...">
+            </label>
+        </div>
+        <button type="submit" class="btn-primary">Add Resource</button>
+    </form>
+</section>
+
+<section class="card">
+    <h2>Registered Resources</h2>
+    {{if .Data}}
+    <table>
+        <thead>
+            <tr><th>Name</th><th>Type</th><th>URL / Clone URL</th><th>Created</th></tr>
+        </thead>
+        <tbody>
+        {{range .Data}}
+        <tr>
+            <td>{{.Name}}</td>
+            <td><span class="badge">{{.ResourceType}}</span></td>
+            <td class="mono small">
+                {{with .ResourceMeta}}{{.}}{{end}}
+            </td>
+            <td class="small">{{.CreatedAt.Format "2006-01-02"}}</td>
+        </tr>
+        {{end}}
+        </tbody>
+    </table>
+    {{else}}
+    <p class="muted">No resources registered yet.</p>
+    {{end}}
+</section>
+{{end}}

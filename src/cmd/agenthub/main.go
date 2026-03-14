@@ -451,6 +451,7 @@ func loadTemplates() (map[string]*template.Template, error) {
 	pages := []string{
 		"login.html", "setup.html", "dashboard.html",
 		"bots.html", "kanban.html", "secrets.html", "task-create.html", "task-detail.html",
+		"resources.html", "projects.html",
 	}
 	out := make(map[string]*template.Template, len(pages)+1)
 	for _, page := range pages {

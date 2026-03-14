@@ -147,6 +147,9 @@ type Server struct {
 	setupMode      bool   // when true, /admin/* routes redirect to /admin/setup
 	storePath      string // needed by setup handler when setupMode is true
 
+	// Public URL used for Slack messages and credential URLs.
+	publicURL string
+
 	// Always-present, no external dependencies.
 	inbox      *Inbox
 	heartbeats *HeartbeatRegistry
@@ -277,6 +280,21 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/webhooks/unsubscribe", s.handleWebhookUnsubscribe)
 	s.mux.HandleFunc("GET /api/webhooks/subscriptions", s.handleWebhookListSubscriptions)
 	s.mux.HandleFunc("POST /api/webhooks/{channel}", s.handleWebhookReceive)
+	// Credential delivery (token-authenticated).
+	s.mux.HandleFunc("GET /api/credentials/{task_assignment_id}", s.handleGetCredentials)
+	// Resource API (user-authenticated: cookie or Bearer token).
+	s.mux.HandleFunc("POST /api/resources", s.handleCreateResource)
+	s.mux.HandleFunc("GET /api/resources", s.handleListResources)
+	s.mux.HandleFunc("GET /api/resources/{id}", s.handleGetResource)
+	s.mux.HandleFunc("DELETE /api/resources/{id}", s.handleDeleteResource)
+	// Project API (user-authenticated).
+	s.mux.HandleFunc("POST /api/projects", s.handleAPICreateProject)
+	s.mux.HandleFunc("GET /api/projects", s.handleAPIListProjects)
+	s.mux.HandleFunc("GET /api/projects/{id}", s.handleAPIGetProject)
+	s.mux.HandleFunc("POST /api/projects/{id}/resources", s.handleAPIAddProjectResource)
+	s.mux.HandleFunc("DELETE /api/projects/{id}/resources/{rid}", s.handleAPIRemoveProjectResource)
+	s.mux.HandleFunc("POST /api/projects/{id}/agents", s.handleAPIAddProjectAgent)
+	s.mux.HandleFunc("DELETE /api/projects/{id}/agents/{aid}", s.handleAPIRemoveProjectAgent)
 
 	// Protected admin routes.
 	protected := s.auth.RequireAuth
@@ -296,6 +314,13 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /admin/secrets", protected(http.HandlerFunc(s.handleSecretsSubmit)))
 	s.mux.Handle("GET /admin/events", protected(http.HandlerFunc(s.handleAdminEvents)))
 	s.mux.Handle("GET /admin/heartbeats", protected(http.HandlerFunc(s.handleAdminHeartbeats)))
+	// Resources admin UI.
+	s.mux.Handle("GET /admin/resources", protected(http.HandlerFunc(s.handleResourcesPage)))
+	s.mux.Handle("POST /admin/resources", protected(http.HandlerFunc(s.handleResourceCreate)))
+	// Projects admin UI.
+	s.mux.Handle("GET /admin/projects", protected(http.HandlerFunc(s.handleProjectsPage)))
+	s.mux.Handle("POST /admin/projects", protected(http.HandlerFunc(s.handleProjectCreate)))
+	s.mux.Handle("GET /admin/projects/{id}", protected(http.HandlerFunc(s.handleProjectDetail)))
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data pageData) {
@@ -677,6 +702,14 @@ func (s *Server) handleKanbanTaskUpdate(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// extractBeadsPrefix returns the prefix from a beads issue ID like "AH-42" → "AH".
+func extractBeadsPrefix(issueID string) string {
+	if idx := strings.Index(issueID, "-"); idx > 0 {
+		return issueID[:idx]
+	}
+	return ""
+}
+
 // handleKanbanTaskAssign sets assignee + status=in_progress via drag-to-agent.
 func (s *Server) handleKanbanTaskAssign(w http.ResponseWriter, r *http.Request) {
 	if s.taskManager == nil {
@@ -687,23 +720,62 @@ func (s *Server) handleKanbanTaskAssign(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
-	id := r.PathValue("id")
+	issueID := r.PathValue("id")
 	assignee := r.FormValue("assignee")
 	status := r.FormValue("status")
 	if status == "" {
 		status = "in_progress"
 	}
-	if err := s.taskManager.UpdateStatus(r.Context(), id, status, "", "admin"); err != nil {
-		slog.Error("assigning task status", "id", id, "error", err)
+	if err := s.taskManager.UpdateStatus(r.Context(), issueID, status, "", "admin"); err != nil {
+		slog.Error("assigning task status", "id", issueID, "error", err)
 	}
 	// Set assignee via a separate targeted update (only assignee field).
 	if assignee != "" {
 		req := TaskUpdateRequest{Assignee: assignee, Status: status, Priority: -1, Actor: "admin"}
-		if err := s.taskManager.UpdateTask(r.Context(), id, req); err != nil {
-			slog.Error("assigning task", "id", id, "assignee", assignee, "error", err)
+		if err := s.taskManager.UpdateTask(r.Context(), issueID, req); err != nil {
+			slog.Error("assigning task", "id", issueID, "assignee", assignee, "error", err)
 		}
 	}
-	s.events.Broadcast("kanban-update", id)
+
+	// Create task assignment record for credential delivery.
+	if adb := s.assignmentDB(); adb != nil && assignee != "" {
+		agentID := ""
+		if s.db != nil {
+			if insts, err := s.db.ListAllInstances(r.Context()); err == nil {
+				for _, inst := range insts {
+					if inst.Name == assignee {
+						agentID = inst.ID
+						break
+					}
+				}
+			}
+		}
+		if agentID != "" {
+			prefix := extractBeadsPrefix(issueID)
+			projectID := ""
+			if prefix != "" {
+				if pdb := s.projectDB(); pdb != nil {
+					if project, err := pdb.GetProjectByBeadsPrefix(r.Context(), prefix); err == nil && project != nil {
+						projectID = project.ID
+						// Auto-grant agent to project.
+						_ = pdb.AddProjectAgent(r.Context(), projectID, agentID, "system")
+					}
+				}
+			}
+			if assignmentID, err := newAPIUUID(); err == nil {
+				_ = adb.CreateTaskAssignment(r.Context(), dolt.TaskAssignment{
+					ID:         assignmentID,
+					TaskID:     issueID,
+					ProjectID:  projectID,
+					AgentID:    agentID,
+					AssignedBy: "system",
+					AssignedAt: time.Now().UTC(),
+				})
+			}
+		}
+	}
+
+	s.events.Broadcast("kanban-update", issueID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
