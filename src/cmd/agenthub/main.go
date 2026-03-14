@@ -25,6 +25,7 @@ import (
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/openai"
 	islack "github.com/NVIDIA-DevPlat/agenthub/src/internal/slack"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/store"
+	goslack "github.com/slack-go/slack"
 	"golang.org/x/term"
 )
 
@@ -159,7 +160,8 @@ func cmdServe(_ []string) error {
 		api.WithKanbanColumns(cfg.Kanban.Columns),
 	}
 	if beadsClient != nil {
-		opts = append(opts, api.WithTaskManager(&beadsTaskManager{client: beadsClient}))
+		btm := &beadsTaskManager{client: beadsClient}
+		opts = append(opts, api.WithTaskManager(btm), api.WithTaskLogger(btm))
 	}
 
 	srv := api.NewServer(authMgr, db, kb, st, tmpl, opts...)
@@ -195,11 +197,17 @@ func cmdServe(_ []string) error {
 			aiChat = &noopAIChatter{}
 		}
 		prober := &openclawProber{cfg: cfg.Openclaw, timeout: cfg.Openclaw.LivenessTimeout}
+
+		// Wire the replier so agents can post Slack replies via POST /api/inbox/{id}/reply.
+		replyClient := goslack.New(slackBotToken)
+		srv.SetReplier(&slackReplier{client: replyClient})
+
 		slackDeps := &islack.Deps{
 			BotRegistry:   &doltBotRegistry{db: db, cfg: cfg.Openclaw},
 			TaskManager:   &slackTaskManager{beads: beadsClient, db: db},
 			AIChat:        aiChat,
 			OpenclawCheck: prober,
+			Inbox:         srv.Inbox(),
 			Config: islack.SlackConfig{
 				CommandPrefix:     cfg.Slack.CommandPrefix,
 				AgenthubURL:       cfg.Server.PublicURL,
@@ -548,6 +556,11 @@ func (m *beadsTaskManager) GetTask(ctx context.Context, id string) (api.TaskReco
 	return api.TaskRecord{ID: issue.ID, Title: issue.Title, Status: string(issue.Status)}, nil
 }
 
+// AddLog implements api.TaskLogger by appending a comment to the beads issue.
+func (m *beadsTaskManager) AddLog(ctx context.Context, issueID, actor, message string) error {
+	return m.client.AddComment(ctx, issueID, actor, message)
+}
+
 func (m *beadsTaskManager) CreateTask(ctx context.Context, req api.TaskCreateRequest) (api.TaskRecord, error) {
 	issue, err := m.client.CreateTask(ctx, beads.TaskRequest{
 		Title:              req.Title,
@@ -738,6 +751,15 @@ func (m *slackTaskManager) CreateAndRoute(ctx context.Context, desc, botName, ac
 		}
 	}
 	return issue.ID, assigned, nil
+}
+
+// ── slackReplier: posts agent replies to Slack via the bot token ──────────────
+
+type slackReplier struct{ client *goslack.Client }
+
+func (r *slackReplier) PostMessage(_ context.Context, channel, text string) error {
+	_, _, err := r.client.PostMessage(channel, goslack.MsgOptionText(text, false))
+	return err
 }
 
 // ── openaiChatter: adapts openai.Client to slack.AIChatter ───────────────────

@@ -132,6 +132,12 @@ type BotSummary struct {
 	Chatty  bool
 }
 
+// InboxEnqueuer buffers a message for a named agent to poll.
+// The api.Inbox type implements this interface.
+type InboxEnqueuer interface {
+	Enqueue(botName, from, channel, text string) string
+}
+
 // Deps holds the dependencies injected into the Slack handler.
 // All fields are interfaces to allow easy mocking in tests.
 type Deps struct {
@@ -139,6 +145,7 @@ type Deps struct {
 	TaskManager   TaskManager
 	AIChat        AIChatter
 	OpenclawCheck OpenclawChecker
+	Inbox         InboxEnqueuer // optional; routes DMs to per-agent inbox
 	Config        SlackConfig
 }
 

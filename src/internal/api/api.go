@@ -108,6 +108,8 @@ type Server struct {
 	healthProber   HealthProber    // optional; health probe skipped if nil
 	capacityReader CapacityReader  // optional; capacity columns hidden if nil
 	taskManager    TaskManager     // optional; kanban actions and bot callbacks disabled if nil
+	taskLogger     TaskLogger      // optional; POST /api/tasks/{id}/log disabled if nil
+	replier        InboxReplier    // optional; POST /api/inbox/{id}/reply posts to Slack if set
 	kanban         KanbanBuilder
 	kanbanColumns  []string        // ordered column names, used by task-create form
 	store          *store.Store
@@ -115,6 +117,12 @@ type Server struct {
 	mux            *http.ServeMux
 	setupMode      bool   // when true, /admin/* routes redirect to /admin/setup
 	storePath      string // needed by setup handler when setupMode is true
+
+	// Always-present, no external dependencies.
+	inbox      *Inbox
+	heartbeats *HeartbeatRegistry
+	events     *EventBroadcaster
+	webhooks   *WebhookRelay
 }
 
 // ServerOption is a functional option for configuring a Server.
@@ -145,6 +153,10 @@ func WithKanbanColumns(cols []string) ServerOption {
 	return func(s *Server) { s.kanbanColumns = cols }
 }
 
+// WithReplier sets the optional InboxReplier used by POST /api/inbox/{id}/reply
+// to post agent replies back to Slack.
+func WithReplier(ir InboxReplier) ServerOption { return func(s *Server) { s.replier = ir } }
+
 // WithSetupMode puts the server into first-run setup mode.
 // In this mode all /admin/* requests (except /admin/setup and /admin/login)
 // redirect to /admin/setup. storePath is the path where the store will be created.
@@ -154,6 +166,14 @@ func WithSetupMode(storePath string) ServerOption {
 		s.storePath = storePath
 	}
 }
+
+// Inbox returns the server's inbox so external callers (e.g. Slack handler)
+// can enqueue messages for agents.
+func (s *Server) Inbox() *Inbox { return s.inbox }
+
+// SetReplier sets the InboxReplier after server creation (used when the Slack
+// client is wired after NewServer returns).
+func (s *Server) SetReplier(ir InboxReplier) { s.replier = ir }
 
 // pageData is the common data passed to every template.
 type pageData struct {
@@ -175,12 +195,16 @@ func NewServer(
 	opts ...ServerOption,
 ) *Server {
 	s := &Server{
-		auth:   authMgr,
-		db:     db,
-		kanban: kb,
-		store:  st,
-		tmpl:   tmpl,
-		mux:    http.NewServeMux(),
+		auth:       authMgr,
+		db:         db,
+		kanban:     kb,
+		store:      st,
+		tmpl:       tmpl,
+		mux:        http.NewServeMux(),
+		inbox:      newInbox(),
+		heartbeats: newHeartbeatRegistry(),
+		events:     newEventBroadcaster(),
+		webhooks:   newWebhookRelay(),
 	}
 	for _, o := range opts {
 		o(s)
@@ -215,6 +239,15 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/register", s.handleRegister)
 	s.mux.HandleFunc("POST /api/tasks", s.handleBotTaskCreate)
 	s.mux.HandleFunc("POST /api/tasks/{id}/status", s.handleTaskStatusUpdate)
+	s.mux.HandleFunc("POST /api/tasks/{id}/log", s.handleTaskLog)
+	s.mux.HandleFunc("GET /api/inbox", s.handleInboxPoll)
+	s.mux.HandleFunc("POST /api/inbox/{id}/ack", s.handleInboxAck)
+	s.mux.HandleFunc("POST /api/inbox/{id}/reply", s.handleInboxReply)
+	s.mux.HandleFunc("POST /api/heartbeat", s.handleHeartbeat)
+	s.mux.HandleFunc("POST /api/webhooks/subscribe", s.handleWebhookSubscribe)
+	s.mux.HandleFunc("POST /api/webhooks/unsubscribe", s.handleWebhookUnsubscribe)
+	s.mux.HandleFunc("GET /api/webhooks/subscriptions", s.handleWebhookListSubscriptions)
+	s.mux.HandleFunc("POST /api/webhooks/{channel}", s.handleWebhookReceive)
 
 	// Protected admin routes.
 	protected := s.auth.RequireAuth
@@ -228,6 +261,8 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /admin/kanban/tasks/{id}/status", protected(http.HandlerFunc(s.handleKanbanTaskStatus)))
 	s.mux.Handle("GET /admin/secrets", protected(http.HandlerFunc(s.handleSecretsPage)))
 	s.mux.Handle("POST /admin/secrets", protected(http.HandlerFunc(s.handleSecretsSubmit)))
+	s.mux.Handle("GET /admin/events", protected(http.HandlerFunc(s.handleAdminEvents)))
+	s.mux.Handle("GET /admin/heartbeats", protected(http.HandlerFunc(s.handleAdminHeartbeats)))
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data pageData) {
@@ -425,6 +460,7 @@ func (s *Server) handleKanbanTaskStatus(w http.ResponseWriter, r *http.Request) 
 	if err := s.taskManager.UpdateStatus(r.Context(), issueID, status, "", "admin"); err != nil {
 		slog.Error("updating kanban task status", "id", issueID, "status", status, "error", err)
 	}
+	s.events.Broadcast("kanban-update", issueID)
 	http.Redirect(w, r, "/admin/kanban", http.StatusSeeOther)
 }
 
@@ -490,8 +526,11 @@ func (s *Server) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Request) 
 		Labels:             r.FormValue("labels"),
 		Actor:              "admin",
 	}
-	if _, err := s.taskManager.CreateTask(r.Context(), req); err != nil {
+	task, err := s.taskManager.CreateTask(r.Context(), req)
+	if err != nil {
 		slog.Error("creating kanban task", "title", title, "error", err)
+	} else {
+		s.events.Broadcast("kanban-update", task.ID)
 	}
 	http.Redirect(w, r, "/admin/kanban", http.StatusSeeOther)
 }

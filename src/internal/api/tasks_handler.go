@@ -53,6 +53,7 @@ func (s *Server) handleTaskStatusUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	s.events.Broadcast("kanban-update", issueID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -110,6 +111,7 @@ func (s *Server) handleBotTaskCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.events.Broadcast("kanban-update", task.ID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_, _ = fmt.Fprintf(w, `{"id":%q,"title":%q,"status":%q}`, task.ID, task.Title, task.Status)

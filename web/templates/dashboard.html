@@ -6,11 +6,7 @@
     <span class="htmx-indicator" id="dash-spinner">Refreshing…</span>
 </div>
 {{with .Data}}
-<div class="stat-row"
-     hx-get="/admin/"
-     hx-trigger="every 30s"
-     hx-target=".stat-row"
-     hx-swap="outerHTML">
+<div id="dash-stats" class="stat-row">
     <div class="card accent-green">
         <h2>{{.BotCount}}</h2>
         <p>Registered Bots</p>
@@ -21,9 +17,66 @@
     </div>
 </div>
 {{end}}
+
+<h2 style="margin-top:2rem">Live Agent Status</h2>
+<div id="agent-grid" class="agent-grid">
+    <p class="muted">No heartbeats yet — agents post to <code>POST /api/heartbeat</code> to appear here.</p>
+</div>
+
 <div class="quick-links">
     <a href="/admin/bots">Manage Bots →</a>
     <a href="/admin/kanban">Kanban Board →</a>
     <a href="/admin/secrets">Secrets →</a>
 </div>
+
+<script>
+(function() {
+    var sse = new EventSource('/admin/events');
+
+    // Refresh dashboard stats via SSE heartbeat events.
+    sse.addEventListener('heartbeat', function() {
+        htmx.ajax('GET', '/admin/', {
+            target: '#dash-stats',
+            swap: 'outerHTML',
+            select: '#dash-stats'
+        });
+        refreshAgentGrid();
+    });
+
+    function refreshAgentGrid() {
+        fetch('/admin/heartbeats')
+            .then(function(r) { return r.json(); })
+            .then(function(bots) {
+                var grid = document.getElementById('agent-grid');
+                if (!bots || bots.length === 0) {
+                    grid.innerHTML = '<p class="muted">No heartbeats yet — agents post to <code>POST /api/heartbeat</code> to appear here.</p>';
+                    return;
+                }
+                var now = Date.now();
+                var html = bots.map(function(b) {
+                    var age = Math.round((now - new Date(b.last_seen).getTime()) / 1000);
+                    var stale = age > 120;
+                    var cls = stale ? 'agent-card stale' : 'agent-card';
+                    var statusDot = b.status === 'working' ? '🟢' : b.status === 'blocked' ? '🔴' : '⚪';
+                    return '<div class="' + cls + '">' +
+                        '<div class="agent-name">' + statusDot + ' ' + escHtml(b.bot_name) + '</div>' +
+                        (b.current_task ? '<div class="agent-task">Task: ' + escHtml(b.current_task) + '</div>' : '') +
+                        (b.message ? '<div class="agent-msg">' + escHtml(b.message) + '</div>' : '') +
+                        '<div class="agent-seen">' + age + 's ago</div>' +
+                        '</div>';
+                }).join('');
+                grid.innerHTML = html;
+            });
+    }
+
+    function escHtml(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // Initial load of agent grid.
+    refreshAgentGrid();
+    // Refresh grid every 60s as a fallback even without heartbeat events.
+    setInterval(refreshAgentGrid, 60000);
+})();
+</script>
 {{end}}

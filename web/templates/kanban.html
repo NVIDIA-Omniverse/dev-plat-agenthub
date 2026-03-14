@@ -3,15 +3,12 @@
 {{define "content"}}
 <div class="page-header">
     <h1>Kanban Board</h1>
-    <span class="htmx-indicator">Refreshing…</span>
+    <span class="htmx-indicator" id="kanban-spinner">Refreshing…</span>
     <a href="/admin/kanban/tasks/new" class="btn-primary btn-sm">+ New Task</a>
 </div>
 {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-<div class="kanban"
-     hx-get="/admin/kanban"
-     hx-trigger="every 30s"
-     hx-swap="outerHTML"
-     hx-select=".kanban">
+<div id="kanban-container">
+<div class="kanban">
 {{with .Data}}
 {{range .Columns}}
 <div class="kanban-col">
@@ -32,8 +29,8 @@
     </div>
     <div class="kanban-add-form">
         <form hx-post="/admin/kanban/tasks"
-              hx-target=".kanban"
-              hx-swap="outerHTML"
+              hx-target="#kanban-container"
+              hx-swap="innerHTML"
               hx-select=".kanban">
             <input type="hidden" name="status" value="{{.Status}}">
             <input type="text" name="title" placeholder="New task…" required>
@@ -44,4 +41,28 @@
 {{end}}
 {{end}}
 </div>
+</div>
+<script>
+(function() {
+    // Replace 30-second HTMX polling with SSE for real-time kanban updates.
+    // Falls back gracefully if SSE is not supported or the connection drops.
+    var sse = new EventSource('/admin/events');
+    function refreshKanban() {
+        var spinner = document.getElementById('kanban-spinner');
+        if (spinner) spinner.style.display = 'inline';
+        htmx.ajax('GET', '/admin/kanban', {
+            target: '#kanban-container',
+            swap: 'innerHTML',
+            select: '.kanban'
+        }).then(function() {
+            if (spinner) spinner.style.display = '';
+        });
+    }
+    sse.addEventListener('kanban-update', refreshKanban);
+    sse.addEventListener('task-log', refreshKanban);
+    sse.onerror = function() {
+        // Connection dropped; SSE will auto-reconnect. No action needed.
+    };
+})();
+</script>
 {{end}}

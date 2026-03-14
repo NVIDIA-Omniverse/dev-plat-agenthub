@@ -206,6 +206,11 @@ func (h *Handler) handleAPIEvent(ctx context.Context, event slackevents.EventsAP
 				taskRef = fmt.Sprintf(":white_check_mark: Task `%s` created", taskID)
 				if assignedBot != "" {
 					taskRef += fmt.Sprintf(" and routed to *%s*", assignedBot)
+					// Queue the original DM in the assigned bot's inbox so the
+					// agent can read the full text (not just the task title).
+					if h.deps.Inbox != nil {
+						h.deps.Inbox.Enqueue(assignedBot, ev.User, ev.Channel, ev.Text)
+					}
 				}
 				taskRef += ".\n"
 			}
