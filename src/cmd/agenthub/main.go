@@ -57,11 +57,13 @@ func run(args []string) error {
 		return cmdSetup(args[1:])
 	case "secret":
 		return cmdSecret(args[1:])
+	case "client":
+		return cmdClient(args[1:])
 	case "version":
 		fmt.Printf("agenthub %s (build %s)\n", Version, Build)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q — try: serve, setup, secret, version", args[0])
+		return fmt.Errorf("unknown command %q — try: serve, setup, secret, client, version", args[0])
 	}
 }
 
