@@ -29,6 +29,63 @@ This project uses the **responsible-vibe** structured workflow:
 
 Follow the `plans/` directory for current phase plans and decisions.
 
+## Deployment
+
+The production instance runs on an Azure VM. **Always use `make build` on the VM — never build locally or cross-compile.**
+
+### Infrastructure facts (look these up with `az` if ever forgotten)
+```
+VM name:       agenthub
+Public IP:     20.124.109.29   (re-run: az vm list-ip-addresses --output table)
+SSH alias:     agenthub        (in ~/.ssh/config — see entry below)
+Source dir:    ~/Src/agenthub
+Binary:        /usr/local/bin/agenthub  (root-owned)
+Service:       /etc/systemd/system/agenthub.service
+Config:        /etc/agenthub/config.yaml
+Credentials:   /etc/agenthub/credentials  (EnvironmentFile for the service)
+```
+
+### SSH config entry (add to ~/.ssh/config if missing or hostname changed)
+```
+Host agenthub
+    Hostname 20.124.109.29
+    User jordanh
+    Port 22
+```
+If the IP ever changes: `az vm list-ip-addresses --output table`, update the entry.
+
+### Standard deploy sequence
+```bash
+# 1. On your local machine — verify tests pass, then push
+make test
+git push origin main
+
+# 2. On the VM — pull, build with Makefile, install, restart
+ssh agenthub "
+  cd ~/Src/agenthub &&
+  git pull &&
+  make build &&
+  sudo cp agenthub /usr/local/bin/agenthub &&
+  sudo systemctl restart agenthub &&
+  sudo systemctl status agenthub --no-pager
+"
+```
+
+`make build` on the VM handles everything: htmx download if missing, CGO flags,
+GOTOOLCHAIN, template/asset embedding, and Version/Build ldflags stamping.
+
+**Why not build locally?** The VM requires CGO (Dolt/beads use `go-icu-regex`).
+Cross-compiling from macOS requires matching Linux ICU libraries and is fragile.
+The VM has Go installed at `/usr/local/go/bin/go`; just use it.
+
+### Verifying a deployment
+```bash
+ssh agenthub "agenthub version"
+ssh agenthub "sudo systemctl status agenthub --no-pager"
+ssh agenthub "sudo journalctl -u agenthub -n 30 --no-pager"
+curl http://20.124.109.29:8080/health
+```
+
 ## Non-Interactive Shell Rules
 
 - Never use interactive prompts in scripts or Makefile targets.
