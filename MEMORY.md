@@ -34,7 +34,8 @@ AI agent sessions that span multiple commits get a narrative section below the l
 | `82439ab` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Added 5 agent coordination features (inbox, heartbeat, activity log, SSE kanban, webhook relay) so outbound-only sandboxed agents can communicate bidirectionally through agenthub. |
 | `a0add06` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Documented deployment process in AGENTS.md — stop-before-copy pattern, `make build` on VM, `az` IP lookup — so it is never forgotten. |
 | `5798779` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Added MEMORY.md session log and corrected deploy sequence (stop service before `sudo cp`). |
-| `(next)` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Added Commandment 5 to AGENTS.md requiring every commit to be logged in MEMORY.md; backfilled full commit history; added this entry per jordanh's instruction. |
+| `5d2a248` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Added Commandment 5 to AGENTS.md requiring every commit to be logged in MEMORY.md; backfilled full commit history; added this entry per jordanh's instruction. |
+| `(next)` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Expanded AGENTS.md SSH config section to instruct all contributors to add the `agenthub` host entry to `~/.ssh/config` — without it every deploy fails. |
 
 ---
 

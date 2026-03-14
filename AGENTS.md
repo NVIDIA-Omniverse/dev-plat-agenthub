@@ -57,14 +57,23 @@ Config:        /etc/agenthub/config.yaml
 Credentials:   /etc/agenthub/credentials  (EnvironmentFile for the service)
 ```
 
-### SSH config entry (add to ~/.ssh/config if missing or hostname changed)
+### SSH config entry — every contributor must have this
+
+Add the following to your `~/.ssh/config` if it isn't already there.
+Without it, `ssh agenthub` resolves to nothing and every deploy command fails.
+
 ```
 Host agenthub
     Hostname 20.124.109.29
     User jordanh
     Port 22
 ```
-If the IP ever changes: `az vm list-ip-addresses --output table`, update the entry.
+
+Quick check: `ssh -G agenthub | grep hostname` — should print `20.124.109.29`.
+If it prints `agenthub` (the alias itself), the entry is missing; add it now.
+
+If the IP ever changes: `az vm list-ip-addresses --output table`, then update
+the `Hostname` line above and in your local `~/.ssh/config`.
 
 ### Standard deploy sequence
 ```bash
