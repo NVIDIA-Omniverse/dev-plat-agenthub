@@ -93,6 +93,28 @@ Five features added to close the architectural gap:
 
 ---
 
+### 2026-03-14 — Claude Sonnet 4.6, Session 5: Beads server mode + Commandment 6
+
+**Context:** Beads was running in embedded mode — agenthub spawned a dolt process on every
+startup. Issuing multiple concurrent writes caused lock contention. The user asked to switch to
+"remote dolt" (server mode) so the dolt process is managed independently.
+
+**Investigation:** Two dolt processes found on VM: port 3306 (main agenthub dolt, systemd
+`dolt.service`) and port 42251 (beads-specific dolt, started by agenthub in embedded mode with
+the beads database already initialized, `issue_prefix=AH` set). No `~/.beads/metadata.json`
+existed — without it, `OpenFromConfig` falls back to embedded mode.
+
+**Fix:** Created `~/.beads/metadata.json` with `dolt_mode: "server"`, `dolt_server_port: 42251`.
+Created `/etc/systemd/system/beads-dolt.service` to run the beads dolt persistently at that
+port. Updated `agenthub.service` to `Require=beads-dolt.service`. After restarting, agenthub
+no longer spawns its own dolt process — only the two managed services remain.
+
+**Also:** Built and installed `bd` v0.60.0 to `/usr/local/bin/bd` on VM (CGO build on VM).
+`bd list` shows live issues. Added **Commandment 6** to AGENTS.md: always run `bd list` +
+`gh issue list` and report pending work before starting any new task.
+
+---
+
 ### 2026-03-14 — Claude Sonnet 4.6, Session 4: Deployment, AGENTS.md, MEMORY.md
 
 Discovered the SSH `agenthub` alias had no real hostname (`az vm list-ip-addresses`
