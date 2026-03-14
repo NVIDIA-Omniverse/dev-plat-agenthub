@@ -7,6 +7,18 @@
 3. **No new features without updating the documentation.** All user-facing behavior, configuration keys, and API changes must be reflected in `docs/` before the feature is merged.
 4. **Use SEMVER for versioning.** Bump the `VERSION` file on every release: PATCH for bug fixes, MINOR for new features, MAJOR for breaking changes. Tag releases with `git tag v<VERSION>`.
 
+## Commandment 5 — Log Every Commit in MEMORY.md
+
+5. **Every commit must be logged in `MEMORY.md`.** For each commit record:
+   - the short hash
+   - who made it (author name / email)
+   - the date
+   - one sentence on the *essence* — the "why", not just what changed
+
+   This applies to human commits and AI-agent commits alike. Do it as part of the
+   same commit (update MEMORY.md, stage it, then commit everything together).
+   The log is append-only; never edit past entries.
+
 ## Work Tracking
 
 This project uses [Beads](https://github.com/steveyegge/beads) for task management, backed by Dolt.

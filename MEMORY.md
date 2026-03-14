@@ -1,111 +1,104 @@
-# MEMORY.md — Agent Session Log
+# MEMORY.md — Commit & Session Log
 
-A running log of every substantive agent (AI/Claude) session working on this repository.
-Each entry records what was done, key decisions made, and the state left behind.
-
----
-
-## 2026-03-14 — Claude Sonnet 4.6 (sessions 1–3)
-
-### Session 1: EnsureInitialized bug fix + beads status alignment
-
-**Problem diagnosed:** `EnsureInitialized` never wrote `issue_prefix` to the beads DB because
-`GetConfig` returns `("", nil)` for missing keys (not an error). The `if err != nil` guard
-was never triggered, so the prefix was silently skipped on every startup.
-
-**Root cause found by:** Extracting and reading the beads library source from the module cache
-zip at `/root/go/pkg/mod/cache/download/github.com/steveyegge/beads/@v/v0.60.0.zip`.
-
-**Fix:** Changed `EnsureInitialized` condition from `if err != nil` to `if value == ""`.
-
-**Also fixed:**
-- Valid status values in `tasks_handler.go` — added `"deferred"`, `"closed"`; removed `"done"`
-  (which beads does not accept)
-- `GetConfig` mock in `beads/mock_storage_test.go` now returns `("", nil)` for absent keys
-  (matching real beads behavior)
-
-**Tested live:** `POST /api/tasks` returned `{"id":"AH-tjm","title":"Test task","status":"open"}`.
-`POST /api/tasks/{id}/status` returned HTTP 204.
-
-**Commits:** `b84e398`, `92449d7`, `202e620`, `395948f`, `445f89d`
+Every commit to this repository must be logged here: hash, author, date, and one sentence
+capturing the *essence* (the why, not just the what). Append-only — never edit past entries.
+AI agent sessions that span multiple commits get a narrative section below the log.
 
 ---
 
-### Session 2: Full API test coverage
+## Commit Log
 
-**Added:** `src/internal/api/api_task_form_test.go` (26 tests)
-- `spyTaskManager` pattern captures last `TaskCreateRequest` for field-level assertions
-- Tests for `GET /admin/kanban/tasks/new`: auth required, renders OK, shows columns
-- Tests for `POST /admin/kanban/tasks`: all 11 fields forwarded, default priority=2
-- Tests for `POST /api/tasks`: actor resolution (body > header > "bot"), response JSON
-- Tests for `POST /api/tasks/{id}/status`: all 5 valid statuses → 204, 6 invalid → 400
-
-**Also added:** `task-create.html` test template to `testTemplates()` in `api_test.go`.
-
-**Commit:** `(pre-session-3 commit)`
-
----
-
-### Session 3: Five agent coordination features
-
-**Context:** Agents are outbound-only sandboxed VMs — they can reach the internet but cannot
-receive inbound connections. agenthub runs in Azure with full bidirectional internet access.
-Slack Socket Mode is impossible for agents; they must poll agenthub instead.
-
-**Feature 1 — Agent Inbox API** (`src/internal/api/inbox.go`)
-- `GET /api/inbox` — returns pending messages without consuming them (persist until Ack'd)
-- `POST /api/inbox/{id}/ack` — remove a single message (idempotent)
-- `POST /api/inbox/{id}/reply` — post reply text to original Slack channel, auto-ack
-- Slack handler now enqueues DMs in the assigned bot's inbox (`slack.InboxEnqueuer` interface)
-- `InboxReplier` interface wired to Slack bot token client in main.go (`slackReplier`)
-
-**Feature 2 — Heartbeat + Live Agent Grid** (`src/internal/api/heartbeat.go`)
-- `POST /api/heartbeat` — agents POST status/current_task/message; response includes `inbox_count`
-- `GET /admin/heartbeats` — cookie-auth JSON endpoint for admin dashboard
-- Dashboard replaced 30s HTMX poll with SSE-triggered JS; renders agent cards with staleness
-
-**Feature 3 — Task Activity Log** (`src/internal/api/activity_log.go`)
-- `POST /api/tasks/{id}/log` — agents append `{"message":"…","level":"warn"}` as beads comments
-- `TaskLogger` optional interface; `beadsTaskManager.AddLog` bridges to `client.AddComment`
-- Broadcasts `task-log` SSE event on each log entry
-
-**Feature 4 — SSE Real-time Kanban** (`src/internal/api/events.go`)
-- `GET /admin/events` — `text/event-stream` with 25s keepalives, nginx buffering disabled
-- `EventBroadcaster` fans out to all connected browsers; non-blocking (skips slow clients)
-- Kanban template: removed `hx-trigger="every 30s"`, added vanilla JS SSE listener
-- All task create/status/log handlers broadcast `kanban-update` or `task-log` events
-
-**Feature 5 — Webhook Relay** (`src/internal/api/webhooks.go`)
-- `POST /api/webhooks/{channel}` — unauthenticated external receive (channel name = shared secret)
-- `POST /api/webhooks/subscribe` / `unsubscribe` — agent channel management (token-auth)
-- `GET /api/webhooks/subscriptions` — list subscribed channels for calling agent
-- Payloads routed to all subscribed bots' inboxes; broadcasts `inbox-update` SSE event
-
-**Wire-up in main.go:**
-- `beadsTaskManager` additionally implements `api.TaskLogger` via `AddLog`
-- `slackReplier` bridges `api.InboxReplier` to `github.com/slack-go/slack` client
-- `srv.Inbox()` and `srv.SetReplier()` public methods for post-creation wiring
-- `slack.Deps.Inbox` field wired to `srv.Inbox()` so DMs route to bot inboxes
-
-**Test file:** `src/internal/api/api_features_test.go` (42 tests covering all 5 features)
-
-**Commits:** `82439ab` (features), `a0add06` (AGENTS.md deployment docs)
-
-**Deployed to production:** `agenthub 0.1.0 (build a0add06)` running on Azure VM `20.124.109.29`.
+| Hash | Author | Date | Essence |
+|------|--------|------|---------|
+| `ab31857` | Jordan Hubbard `jordanhubbard@gmail.com` | 2026-02-? | Blank slate — initial empty repo commit. |
+| `fe1396a` | jordanh `jordanh@nvidia.com` | 2026-02-? | First real commit: agenthub v0.1.0 with core HTTP server, Dolt bot registry, Slack Socket Mode integration, and admin web UI. |
+| `b76f7f2` | jordanh `jordanh@nvidia.com` | 2026-02-? | Added README documenting setup, architecture, and features so new contributors can orient themselves. |
+| `b825d48` | jordanh `jordanh@nvidia.com` | 2026-02-? | Six feature improvements plus a major UI overhaul — richer kanban, bots page, secrets management, HTMX partials. |
+| `5d085b3` | jordanh `jordanh@nvidia.com` | 2026-02-? | Added Makefile `deps` and `install` targets so the project could be built and deployed from a clean machine. |
+| `4a6b35b` | jordanh `jordanh@nvidia.com` | 2026-02-? | BOTJILE contract: every bot must create a kanban task before starting work, so all work is visible on the board. |
+| `201c693` | jordanh `jordanh@nvidia.com` | 2026-02-? | `make install` now runs `deps` first so a single command fully sets up a new machine. |
+| `220ebf2` | jordanh `jordanh@nvidia.com` | 2026-02-? | Fixed Linux `deps`: install Go from `go.dev/dl/` instead of `apt` so we always get the required version. |
+| `8e0ef8a` | jordanh `jordanh@nvidia.com` | 2026-02-? | Fixed `go mod download` using stale system Go path after the fresh install — PATH ordering bug. |
+| `395948f` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Pinned beads to published v0.60.0 and removed local `replace` directive so CI and the VM pull the same version. |
+| `202e620` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Expanded `~` in `store.path` so `agenthub serve` could find the secrets file without an absolute path. |
+| `92449d7` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Fixed Go template rendering: per-page template map prevents the last-parsed file from overriding all pages. |
+| `b84e398` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Auto-create Dolt database on first connect and auto-run `deps` before build so a fresh VM needs no manual setup steps. |
+| `445f89d` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Support `AGENTHUB_ADMIN_PASSWORD` env var so systemd/CI can start the server non-interactively. |
+| `0d19d61` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Fixed beads integration to use `OpenFromConfig` instead of `Open` so server-mode settings in `metadata.json` are respected. |
+| `3aa676b` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Added `agenthub secret set/get/list` subcommand for managing encrypted-store secrets from the CLI without running the server. |
+| `075ef79` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Fixed kanban task creation and exposed all beads fields (priority, issue type, assignee, etc.) in the creation form. |
+| `ea521d1` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Fixed kanban column names to use valid beads statuses (`open`, `in_progress`, `blocked`, `deferred`, `closed`) — `done` is not valid. |
+| `3afa6dc` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Fixed beads init and valid status values — `EnsureInitialized` was silently skipping because `GetConfig` returns `("", nil)` not an error for missing keys. |
+| `2935f85` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Root fix for `EnsureInitialized`: check `value == ""` not `err != nil` so the issue prefix is actually written on first startup. |
+| `a3735b0` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Added full API test coverage for task form handlers (26 tests) using `spyTaskManager` to assert all 11 form fields are forwarded. |
+| `82439ab` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Added 5 agent coordination features (inbox, heartbeat, activity log, SSE kanban, webhook relay) so outbound-only sandboxed agents can communicate bidirectionally through agenthub. |
+| `a0add06` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Documented deployment process in AGENTS.md — stop-before-copy pattern, `make build` on VM, `az` IP lookup — so it is never forgotten. |
+| `5798779` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Added MEMORY.md session log and corrected deploy sequence (stop service before `sudo cp`). |
+| `(next)` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Added Commandment 5 to AGENTS.md requiring every commit to be logged in MEMORY.md; backfilled full commit history; added this entry per jordanh's instruction. |
 
 ---
 
-## Deployment state as of 2026-03-14
+## Session Narratives
 
-| Item | Value |
-|---|---|
-| Production version | `0.1.0 (build a0add06)` |
-| VM | `agenthub` / `20.124.109.29` |
-| Service | `systemd agenthub.service` — active |
-| Branch | `main` — clean |
-| Test coverage | all packages passing |
+Deeper context behind groups of commits, written by the agent(s) who made them.
 
 ---
 
-*Append a new dated section for each agent session. Include: what problem was solved,
-key decisions, files changed, and the commit hash(es). Keep entries factual and terse.*
+### 2026-03-14 — Claude Sonnet 4.6, Session 1: EnsureInitialized bug fix
+
+**Problem:** `POST /api/tasks` always returned "database not initialized" even after first
+startup. Root cause traced by reading beads library source from the module cache zip:
+`GetConfig` returns `("", nil)` for missing keys — not an error. The `if err != nil` guard
+in `EnsureInitialized` was never triggered, so `issue_prefix` was never written.
+
+**Fix:** `if err != nil` → `if value == ""`. One condition change; confirmed live by
+`POST /api/tasks` returning `{"id":"AH-tjm","title":"Test task","status":"open"}`.
+
+**Also:** aligned valid status set (`deferred`, `closed` added; `done` removed); fixed
+`GetConfig` mock to return `("", nil)` for missing keys to match real beads behavior.
+
+---
+
+### 2026-03-14 — Claude Sonnet 4.6, Session 2: Full API test coverage
+
+Added `api_task_form_test.go` (26 tests). Key pattern: `spyTaskManager` captures the last
+`TaskCreateRequest` so each of the 11 form fields can be asserted individually. Also
+covered actor resolution priority (body `bot_name` > `X-Bot-Name` header > `"bot"`),
+default priority=2, and all 5 valid / 6 invalid status values for the status endpoint.
+
+---
+
+### 2026-03-14 — Claude Sonnet 4.6, Session 3: Five agent coordination features
+
+**Context:** Agents run in outbound-only sandboxed VMs. They can reach the internet but
+cannot receive inbound connections, making Slack Socket Mode impossible. agenthub runs in
+Azure with full bidirectional internet access and acts as the relay point for all agent
+communication.
+
+Five features added to close the architectural gap:
+
+1. **Agent Inbox** — buffers Slack DMs per-agent; Poll is non-destructive (messages
+   persist until Ack'd); Reply posts back to Slack on the agent's behalf.
+2. **Heartbeat** — agents prove liveness; response includes `inbox_count` so they know
+   when to poll; dashboard shows a live agent grid with staleness detection.
+3. **Activity Log** — agents append structured progress notes to tasks as beads comments;
+   triggers SSE refresh so the kanban card updates in real time.
+4. **SSE Kanban** — replaced 30-second HTMX polling with a `text/event-stream` endpoint;
+   `EventBroadcaster` fans out to all connected browsers non-blocking.
+5. **Webhook Relay** — external services (GitHub, CI) POST to a channel URL; payloads
+   route to all subscribed agents' inboxes. Channel name is the shared secret.
+
+---
+
+### 2026-03-14 — Claude Sonnet 4.6, Session 4: Deployment, AGENTS.md, MEMORY.md
+
+Discovered the SSH `agenthub` alias had no real hostname (`az vm list-ip-addresses`
+showed `20.124.109.29`). Added it to `~/.ssh/config`. First deploy attempt failed with
+`Text file busy` — Linux locks running binaries; fixed by stopping the service before
+`sudo cp`. Wrote the correct stop→build→stop→copy→start sequence into AGENTS.md.
+
+Created MEMORY.md as a running commit log. Added Commandment 5 to AGENTS.md requiring
+every commit to be logged here. Backfilled all 24 prior commits. Deployed `0.1.0 (build 5798779)` to production.
+
+Per jordanh's instruction: this conversation itself (adding Commandment 5 and backfilling
+the commit log) is logged as the `(next)` entry above.
