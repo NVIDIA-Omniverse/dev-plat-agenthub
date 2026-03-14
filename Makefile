@@ -135,6 +135,14 @@ install: deps build
 	cp $(BINARY) "$(INSTALL_DIR)/agenthub"
 	@echo "Installed: $(INSTALL_DIR)/agenthub"
 
+## deploy-system: Build and install agenthub to /usr/local/bin, then restart the systemd service
+deploy-system: build
+	@echo "Deploying agenthub to /usr/local/bin..."
+	@sudo systemctl stop agenthub 2>/dev/null || true
+	@sudo cp $(BINARY) /usr/local/bin/agenthub
+	@sudo systemctl start agenthub
+	@echo "Deployed and restarted agenthub service."
+
 # ── Test targets ──────────────────────────────────────────────────────────────
 
 ## test: Run all unit tests
