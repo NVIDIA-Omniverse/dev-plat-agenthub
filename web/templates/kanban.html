@@ -18,44 +18,80 @@
     <div id="task-panel-inner"></div>
 </div>
 
-<div id="kanban-container">
-<div class="kanban">
-{{with .Data}}
-{{range .Columns}}
-<div class="kanban-col">
-    <h3>
-        {{humanStatus .Status}}
-        <span class="count">{{len .Issues}}</span>
-    </h3>
-    <div class="kanban-cards">
-    {{range .Issues}}
-    <div class="kanban-card"
-         hx-get="/admin/kanban/tasks/{{.ID}}"
-         hx-target="#task-panel-inner"
-         hx-swap="innerHTML"
-         onclick="openTaskPanel()">
-        <div class="card-id">{{.ID}}</div>
-        <div class="card-title">{{.Title}}</div>
-        {{if .Assignee}}<div class="card-assignee">→ {{.Assignee}}</div>{{end}}
+<!-- Split-screen layout -->
+<div class="kanban-split" id="kanban-split">
+
+  <!-- Upper pane: kanban board -->
+  <div class="kanban-pane" id="kanban-pane-top">
+    <div id="kanban-container">
+    <div class="kanban">
+    {{with .Data}}
+    {{range .Columns}}
+    <div class="kanban-col"
+         data-status="{{.Status}}"
+         ondragover="event.preventDefault(); this.classList.add('drag-over')"
+         ondragleave="this.classList.remove('drag-over')"
+         ondrop="onColumnDrop(event, '{{.Status}}')">
+        <h3>
+            {{humanStatus .Status}}
+            <span class="count">{{len .Issues}}</span>
+        </h3>
+        <div class="kanban-cards">
+        {{range .Issues}}
+        <div class="kanban-card"
+             draggable="true"
+             data-id="{{.ID}}"
+             data-status="{{$.Status}}"
+             hx-get="/admin/kanban/tasks/{{.ID}}"
+             hx-target="#task-panel-inner"
+             hx-swap="innerHTML"
+             ondragstart="onCardDragStart(event)"
+             ondragend="onCardDragEnd(event)"
+             onclick="openTaskPanel()">
+            <div class="card-id">{{.ID}}</div>
+            <div class="card-title">{{.Title}}</div>
+            {{if .Assignee}}<div class="card-assignee">→ {{.Assignee}}</div>{{end}}
+        </div>
+        {{else}}
+        <div class="kanban-empty">Empty</div>
+        {{end}}
+        </div>
+        <div class="kanban-add-form">
+            <button class="btn-secondary btn-sm kanban-add-btn"
+                    hx-get="/admin/kanban/tasks/new?status={{.Status}}"
+                    hx-target="#task-panel-inner"
+                    hx-swap="innerHTML"
+                    onclick="openTaskPanel()">+ Add</button>
+        </div>
     </div>
-    {{else}}
-    <div class="kanban-empty">Empty</div>
+    {{end}}
     {{end}}
     </div>
-    <div class="kanban-add-form">
-        <button class="btn-secondary btn-sm kanban-add-btn"
-                hx-get="/admin/kanban/tasks/new?status={{.Status}}"
-                hx-target="#task-panel-inner"
-                hx-swap="innerHTML"
-                onclick="openTaskPanel()">+ Add</button>
     </div>
-</div>
-{{end}}
-{{end}}
-</div>
-</div>
+  </div><!-- /kanban-pane-top -->
+
+  <!-- Sash (drag handle) -->
+  <div class="kanban-sash" id="kanban-sash" title="Drag to resize"></div>
+
+  <!-- Lower pane: agents -->
+  <div class="kanban-pane" id="kanban-pane-bottom">
+    <div class="agents-pane-header">
+        <span>Agents</span>
+        <span class="agents-pane-hint">Drag a card onto an agent to assign it</span>
+    </div>
+    <div id="agents-grid"
+         hx-get="/admin/kanban/agents"
+         hx-trigger="load, every 30s"
+         hx-swap="innerHTML">
+      Loading…
+    </div>
+  </div><!-- /kanban-pane-bottom -->
+
+</div><!-- /kanban-split -->
+
 <script>
 (function() {
+    /* ── Slide-over panel ── */
     var overlay = document.getElementById('task-overlay');
     var panel   = document.getElementById('task-panel');
 
@@ -68,16 +104,92 @@
         panel.classList.remove('active');
         document.getElementById('task-panel-inner').innerHTML = '';
     };
-
-    // Close panel on ESC key.
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') closeTaskPanel();
     });
-
-    // Server signals panel-close via HX-Trigger response header (after task create).
     document.body.addEventListener('close-panel', closeTaskPanel);
 
-    // SSE for real-time kanban updates.
+    /* ── Drag-and-drop between columns ── */
+    var draggingId = null;
+
+    window.onCardDragStart = function(e) {
+        draggingId = e.currentTarget.dataset.id;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', draggingId);
+        setTimeout(function() { e.currentTarget.classList.add('dragging'); }, 0);
+    };
+    window.onCardDragEnd = function(e) {
+        e.currentTarget.classList.remove('dragging');
+        document.querySelectorAll('.drag-over').forEach(function(el) {
+            el.classList.remove('drag-over');
+        });
+    };
+    window.onColumnDrop = function(e, newStatus) {
+        e.preventDefault();
+        var col = e.currentTarget;
+        col.classList.remove('drag-over');
+        var id = e.dataTransfer.getData('text/plain') || draggingId;
+        if (!id) return;
+        var form = new FormData();
+        form.append('status', newStatus);
+        fetch('/admin/kanban/tasks/' + encodeURIComponent(id) + '/status', {
+            method: 'POST',
+            body: form,
+            credentials: 'same-origin'
+        }).then(function() {
+            refreshKanban();
+        });
+    };
+
+    /* ── Drag card to agent (assign) ── */
+    window.onAgentDrop = function(e, botName) {
+        e.preventDefault();
+        var card = e.currentTarget;
+        card.classList.remove('agent-drag-over');
+        var id = e.dataTransfer.getData('text/plain') || draggingId;
+        if (!id || !botName) return;
+        var form = new FormData();
+        form.append('assignee', botName);
+        fetch('/admin/kanban/tasks/' + encodeURIComponent(id) + '/assign', {
+            method: 'POST',
+            body: form,
+            credentials: 'same-origin'
+        }).then(function() { refreshKanban(); });
+    };
+
+    /* ── Resizable sash ── */
+    var split = document.getElementById('kanban-split');
+    var sash  = document.getElementById('kanban-sash');
+    var top   = document.getElementById('kanban-pane-top');
+    var bot   = document.getElementById('kanban-pane-bottom');
+    var draggingSash = false, startY, startTopH;
+
+    sash.addEventListener('mousedown', function(e) {
+        draggingSash = true;
+        startY = e.clientY;
+        startTopH = top.offsetHeight;
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'row-resize';
+    });
+    document.addEventListener('mousemove', function(e) {
+        if (!draggingSash) return;
+        var delta = e.clientY - startY;
+        var totalH = split.offsetHeight - sash.offsetHeight;
+        var newTopH = Math.max(120, Math.min(totalH - 100, startTopH + delta));
+        top.style.flex = 'none';
+        top.style.height = newTopH + 'px';
+        bot.style.flex = '1';
+        bot.style.height = '';
+    });
+    document.addEventListener('mouseup', function() {
+        if (draggingSash) {
+            draggingSash = false;
+            document.body.style.userSelect = '';
+            document.body.style.cursor = '';
+        }
+    });
+
+    /* ── SSE real-time kanban updates ── */
     var sse = new EventSource('/admin/events');
     function refreshKanban() {
         var spinner = document.getElementById('kanban-spinner');
@@ -95,4 +207,21 @@
     sse.onerror = function() {};
 })();
 </script>
+{{end}}
+
+{{define "kanban-agents"}}
+{{if .Data}}
+{{range .Data}}
+<div class="agent-card {{if .IsAlive}}agent-alive{{else}}agent-dead{{end}}"
+     data-bot="{{.Name}}"
+     ondragover="event.preventDefault(); this.classList.add('agent-drag-over')"
+     ondragleave="this.classList.remove('agent-drag-over')"
+     ondrop="onAgentDrop(event, '{{.Name}}')">
+    <span class="agent-status-dot"></span>
+    <span class="agent-name">{{.Name}}</span>
+</div>
+{{end}}
+{{else}}
+<div class="agents-empty">No agents registered. Use <code>agenthub client create &lt;name&gt;</code> to add one.</div>
+{{end}}
 {{end}}

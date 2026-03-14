@@ -63,7 +63,11 @@
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem">
         <div>
             <label>Assignee</label>
-            <input type="text" name="assignee" value="{{.Task.Assignee}}" placeholder="bot or person">
+            <input type="text" name="assignee" value="{{.Task.Assignee}}"
+                   list="bot-names" placeholder="bot or person" autocomplete="off">
+            <datalist id="bot-names">
+                {{range .Bots}}<option value="{{.}}">{{end}}
+            </datalist>
         </div>
         <div>
             <label>Estimated (minutes)</label>

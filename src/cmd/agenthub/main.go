@@ -462,6 +462,7 @@ func loadTemplates() (map[string]*template.Template, error) {
 	out["bots-table"]        = out["bots.html"]
 	out["task-create-panel"] = out["task-create.html"]
 	out["task-detail-panel"] = out["task-detail.html"]
+	out["kanban-agents"]     = out["kanban.html"]
 	return out, nil
 }
 

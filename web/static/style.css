@@ -548,6 +548,112 @@ code, .mono {
 .bot-name { font-weight: 600; color: var(--text); }
 .bot-host { font-family: var(--font-mono); font-size: 0.82rem; color: var(--text-muted); }
 
+/* ── Kanban split-screen layout ── */
+.kanban-split {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 9rem);
+  overflow: hidden;
+}
+.kanban-pane {
+  overflow: auto;
+  min-height: 100px;
+}
+#kanban-pane-top  { flex: 3; }
+#kanban-pane-bottom { flex: 1; border-top: 2px solid var(--border); }
+.kanban-sash {
+  height: 6px;
+  background: var(--border);
+  cursor: row-resize;
+  flex: none;
+  position: relative;
+}
+.kanban-sash:hover, .kanban-sash:active {
+  background: var(--green);
+}
+.kanban-sash::after {
+  content: '';
+  display: block;
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 100%;
+  background: rgba(255,255,255,0.1);
+  border-radius: 3px;
+}
+
+/* ── Drag-and-drop ── */
+.kanban-card.dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+.kanban-col.drag-over {
+  outline: 2px dashed var(--green);
+  outline-offset: -4px;
+}
+
+/* ── Agents lower pane ── */
+.agents-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.agents-pane-hint {
+  font-weight: 400;
+  text-transform: none;
+  font-style: italic;
+  font-size: 0.78rem;
+}
+#agents-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  align-content: flex-start;
+}
+.agent-card {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: default;
+  min-width: 140px;
+  transition: border-color 0.1s;
+}
+.agent-card.agent-drag-over {
+  border-color: var(--green);
+  background: rgba(130,185,0,0.1);
+}
+.agent-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.agent-alive .agent-status-dot { background: var(--green); }
+.agent-dead  .agent-status-dot { background: var(--red); }
+.agent-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.agents-empty {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  padding: 0.5rem;
+}
+
 /* ── Task panel overlay ── */
 .task-overlay {
   display: none;

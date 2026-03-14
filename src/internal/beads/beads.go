@@ -159,13 +159,15 @@ func (c *Client) UpdateFields(ctx context.Context, issueID, title, description, 
 
 	updates := map[string]interface{}{
 		"description":         description,
-		"priority":            priority,
 		"assignee":            assignee,
 		"acceptance_criteria": acceptanceCriteria,
 		"notes":               notes,
 	}
 	if title != "" {
 		updates["title"] = title
+	}
+	if priority >= 0 {
+		updates["priority"] = priority
 	}
 	if status != "" {
 		updates["status"] = beadslib.Status(status)

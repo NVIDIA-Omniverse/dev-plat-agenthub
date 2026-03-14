@@ -289,6 +289,8 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /admin/kanban/tasks/{id}/status", protected(http.HandlerFunc(s.handleKanbanTaskStatus)))
 	s.mux.Handle("GET /admin/kanban/tasks/{id}", protected(http.HandlerFunc(s.handleKanbanTaskDetail)))
 	s.mux.Handle("POST /admin/kanban/tasks/{id}", protected(http.HandlerFunc(s.handleKanbanTaskUpdate)))
+	s.mux.Handle("GET /admin/kanban/agents", protected(http.HandlerFunc(s.handleKanbanAgents)))
+	s.mux.Handle("POST /admin/kanban/tasks/{id}/assign", protected(http.HandlerFunc(s.handleKanbanTaskAssign)))
 	s.mux.Handle("GET /admin/secrets", protected(http.HandlerFunc(s.handleSecretsPage)))
 	s.mux.Handle("POST /admin/secrets", protected(http.HandlerFunc(s.handleSecretsSubmit)))
 	s.mux.Handle("GET /admin/events", protected(http.HandlerFunc(s.handleAdminEvents)))
@@ -497,7 +499,7 @@ func (s *Server) handleKanbanTaskStatus(w http.ResponseWriter, r *http.Request) 
 // handleKanbanTaskNew renders the full task-creation form.
 // Returns an HTMX fragment if called with HX-Request header; full page otherwise.
 func (s *Server) handleKanbanTaskNew(w http.ResponseWriter, r *http.Request) {
-	d := s.taskFormData()
+	d := s.taskFormDataWithBots(r.Context())
 	// Pre-fill status if provided via query param (column quick-add).
 	if st := r.URL.Query().Get("status"); st != "" {
 		d.Task.Status = st
@@ -567,6 +569,7 @@ type taskFormData struct {
 		Value int
 		Label string
 	}
+	Bots []string // registered bot names for assignee suggestions
 }
 
 func (s *Server) taskFormData() taskFormData {
@@ -585,6 +588,18 @@ func (s *Server) taskFormData() taskFormData {
 	}
 }
 
+func (s *Server) taskFormDataWithBots(ctx context.Context) taskFormData {
+	d := s.taskFormData()
+	if s.db != nil {
+		if insts, err := s.db.ListAllInstances(ctx); err == nil {
+			for _, inst := range insts {
+				d.Bots = append(d.Bots, inst.Name)
+			}
+		}
+	}
+	return d
+}
+
 // handleKanbanTaskDetail returns the task detail panel (HTMX fragment or full page).
 func (s *Server) handleKanbanTaskDetail(w http.ResponseWriter, r *http.Request) {
 	if s.taskManager == nil {
@@ -597,7 +612,7 @@ func (s *Server) handleKanbanTaskDetail(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	d := s.taskFormData()
+	d := s.taskFormDataWithBots(r.Context())
 	d.Task = task
 	if r.Header.Get("HX-Request") == "true" {
 		s.renderFragment(w, "task-detail-panel", pageData{Data: d})
@@ -653,12 +668,59 @@ func (s *Server) handleKanbanTaskUpdate(w http.ResponseWriter, r *http.Request) 
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		d := s.taskFormData()
+		d := s.taskFormDataWithBots(r.Context())
 		d.Task = task
 		s.renderFragment(w, "task-detail-panel", pageData{Data: d})
 	} else {
 		http.Redirect(w, r, "/admin/kanban", http.StatusSeeOther)
 	}
+}
+
+// handleKanbanTaskAssign sets assignee + status=in_progress via drag-to-agent.
+func (s *Server) handleKanbanTaskAssign(w http.ResponseWriter, r *http.Request) {
+	if s.taskManager == nil {
+		http.Error(w, "task manager not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	id := r.PathValue("id")
+	assignee := r.FormValue("assignee")
+	status := r.FormValue("status")
+	if status == "" {
+		status = "in_progress"
+	}
+	if err := s.taskManager.UpdateStatus(r.Context(), id, status, "", "admin"); err != nil {
+		slog.Error("assigning task status", "id", id, "error", err)
+	}
+	// Set assignee via a separate targeted update (only assignee field).
+	if assignee != "" {
+		req := TaskUpdateRequest{Assignee: assignee, Status: status, Priority: -1, Actor: "admin"}
+		if err := s.taskManager.UpdateTask(r.Context(), id, req); err != nil {
+			slog.Error("assigning task", "id", id, "assignee", assignee, "error", err)
+		}
+	}
+	s.events.Broadcast("kanban-update", id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleKanbanAgents returns the agents pane fragment for the split kanban view.
+func (s *Server) handleKanbanAgents(w http.ResponseWriter, r *http.Request) {
+	type agentRow struct {
+		Name    string
+		IsAlive bool
+	}
+	var rows []agentRow
+	if s.db != nil {
+		if insts, err := s.db.ListAllInstances(r.Context()); err == nil {
+			for _, inst := range insts {
+				rows = append(rows, agentRow{Name: inst.Name, IsAlive: inst.IsAlive})
+			}
+		}
+	}
+	s.renderFragment(w, "kanban-agents", pageData{Data: rows})
 }
 
 func (s *Server) handleSecretsPage(w http.ResponseWriter, r *http.Request) {
