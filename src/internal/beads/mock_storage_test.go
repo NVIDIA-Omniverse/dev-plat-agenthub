@@ -131,8 +131,6 @@ func (m *mockStorage) SetConfig(_ context.Context, key, value string) error {
 }
 
 func (m *mockStorage) GetConfig(_ context.Context, key string) (string, error) {
-	if v, ok := m.configs[key]; ok {
-		return v, nil
-	}
-	return "", fmt.Errorf("key %q not found", key)
+	// Match real beads behavior: return ("", nil) for missing keys.
+	return m.configs[key], nil
 }

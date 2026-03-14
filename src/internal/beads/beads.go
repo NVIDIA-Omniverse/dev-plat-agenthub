@@ -197,8 +197,12 @@ func (c *Client) AddComment(ctx context.Context, issueID, author, text string) e
 // EnsureInitialized ensures the Beads database has been initialized with a prefix.
 // Should be called on first startup.
 func (c *Client) EnsureInitialized(ctx context.Context, prefix string) error {
-	_, err := c.storage.GetConfig(ctx, "issue_prefix")
+	// GetConfig returns ("", nil) when the key is absent, so check the value not the error.
+	value, err := c.storage.GetConfig(ctx, "issue_prefix")
 	if err != nil {
+		return fmt.Errorf("checking beads init: %w", err)
+	}
+	if value == "" {
 		// Not initialized yet.
 		if err2 := c.storage.SetConfig(ctx, "issue_prefix", prefix); err2 != nil {
 			return fmt.Errorf("initializing beads prefix: %w", err2)
