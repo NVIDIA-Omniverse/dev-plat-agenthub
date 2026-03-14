@@ -24,7 +24,7 @@ func TestCloseTaskError(t *testing.T) {
 	m.closeErr = errors.New("close failed")
 	c := NewWithStorage(m)
 
-	issue, _ := c.CreateTask(context.Background(), "task", "", "a", 1)
+	issue, _ := c.CreateTask(context.Background(), TaskRequest{Title: "task", Description: "", Actor: "a", Priority: 1})
 	err := c.CloseTask(context.Background(), issue.ID, "done", "a")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "closing task")
@@ -45,7 +45,7 @@ func TestAddCommentError(t *testing.T) {
 	m.commentErr = errors.New("comment failed")
 	c := NewWithStorage(m)
 
-	issue, _ := c.CreateTask(context.Background(), "task", "", "a", 1)
+	issue, _ := c.CreateTask(context.Background(), TaskRequest{Title: "task", Description: "", Actor: "a", Priority: 1})
 	err := c.AddComment(context.Background(), issue.ID, "a", "text")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "adding comment")

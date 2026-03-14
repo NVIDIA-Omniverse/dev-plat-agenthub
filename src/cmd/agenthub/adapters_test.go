@@ -13,6 +13,7 @@ import (
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	beadslib "github.com/steveyegge/beads"
+	"github.com/NVIDIA-DevPlat/agenthub/src/internal/api"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/beads"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/config"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/dolt"
@@ -94,7 +95,7 @@ func TestBeadsTaskManagerCreateTask(t *testing.T) {
 	client := beads.NewWithStorage(storage)
 	mgr := &beadsTaskManager{client: client}
 
-	rec, err := mgr.CreateTask(context.Background(), "fix bug", "desc", "user1", 2)
+	rec, err := mgr.CreateTask(context.Background(), api.TaskCreateRequest{Title: "fix bug", Description: "desc", Actor: "user1", Priority: 2})
 	require.NoError(t, err)
 	require.Equal(t, "fix bug", rec.Title)
 	require.NotEmpty(t, rec.ID)
@@ -106,7 +107,7 @@ func TestBeadsTaskManagerCreateTaskError(t *testing.T) {
 	client := beads.NewWithStorage(storage)
 	mgr := &beadsTaskManager{client: client}
 
-	_, err := mgr.CreateTask(context.Background(), "fix bug", "", "user1", 2)
+	_, err := mgr.CreateTask(context.Background(), api.TaskCreateRequest{Title: "fix bug", Actor: "user1"})
 	require.Error(t, err)
 }
 

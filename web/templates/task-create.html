@@ -1,0 +1,76 @@
+{{template "layout.html" .}}
+{{define "title"}}New Task — agenthub{{end}}
+{{define "content"}}
+<div class="page-header">
+    <h1>New Task</h1>
+    <a href="/admin/kanban" class="btn-secondary btn-sm">← Kanban</a>
+</div>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+<div class="card" style="max-width:720px">
+<form method="POST" action="/admin/kanban/tasks">
+
+    <label>Title *</label>
+    <input type="text" name="title" required autofocus placeholder="What needs to be done?">
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem">
+        <div>
+            <label>Status</label>
+            <select name="status">
+                {{range .Data.Columns}}
+                <option value="{{.}}">{{.}}</option>
+                {{end}}
+            </select>
+        </div>
+        <div>
+            <label>Priority</label>
+            <select name="priority">
+                {{range .Data.Priorities}}
+                <option value="{{.Value}}"{{if eq .Value 2}} selected{{end}}>{{.Label}}</option>
+                {{end}}
+            </select>
+        </div>
+        <div>
+            <label>Type</label>
+            <select name="issue_type">
+                {{range .Data.IssueTypes}}
+                <option value="{{.Value}}"{{if eq .Value "task"}} selected{{end}}>{{.Label}}</option>
+                {{end}}
+            </select>
+        </div>
+    </div>
+
+    <label>Description</label>
+    <textarea name="description" rows="4" placeholder="Background, context, or details…"></textarea>
+
+    <label>Acceptance Criteria</label>
+    <textarea name="acceptance_criteria" rows="3" placeholder="How will we know this is done?"></textarea>
+
+    <label>Notes</label>
+    <textarea name="notes" rows="2" placeholder="Implementation notes, links, caveats…"></textarea>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem">
+        <div>
+            <label>Assignee</label>
+            <input type="text" name="assignee" placeholder="bot or person name">
+        </div>
+        <div>
+            <label>Estimated (minutes)</label>
+            <input type="number" name="estimated_minutes" min="0" step="1" placeholder="0">
+        </div>
+        <div>
+            <label>Due Date</label>
+            <input type="date" name="due_at">
+        </div>
+    </div>
+
+    <label>Labels <small style="text-transform:none;font-weight:400">(comma-separated)</small></label>
+    <input type="text" name="labels" placeholder="backend, urgent, needs-review">
+
+    <div style="display:flex;gap:0.75rem;margin-top:0.5rem">
+        <button type="submit" class="btn-primary" style="width:auto">Create Task</button>
+        <a href="/admin/kanban" class="btn-secondary">Cancel</a>
+    </div>
+
+</form>
+</div>
+{{end}}

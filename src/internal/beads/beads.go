@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	beadslib "github.com/steveyegge/beads"
@@ -56,20 +57,60 @@ func (c *Client) Storage() Storage {
 	return c.storage
 }
 
-// CreateTask creates a new open issue with the given title, description, and priority.
-// priority 0 = critical, 1 = high, 2 = normal, 3 = low.
-// actor is the Slack user ID or name who created the task.
-func (c *Client) CreateTask(ctx context.Context, title, description, actor string, priority int) (*beadslib.Issue, error) {
-	issue := &beadslib.Issue{
-		Title:       title,
-		Description: description,
-		Priority:    priority,
-		Status:      beadslib.StatusOpen,
-		IssueType:   beadslib.TypeTask,
-		CreatedBy:   actor,
+// TaskRequest holds all user-settable fields for creating a new task.
+// Zero values are treated as "not set"; defaults are applied before storage.
+type TaskRequest struct {
+	Title              string
+	Description        string
+	Status             string // beads status or kanban column name; defaults to StatusOpen
+	Priority           int    // 0=critical 1=high 2=normal 3=low
+	IssueType          string // "task", "bug", "feature", "epic", "chore"
+	Assignee           string
+	EstimatedMinutes   int    // 0 = unset
+	AcceptanceCriteria string
+	Notes              string
+	DueAt              string // "YYYY-MM-DD" or ""
+	Labels             string // comma-separated
+	Actor              string
+}
+
+// CreateTask creates a new issue from a TaskRequest.
+// Zero-value Status defaults to StatusOpen; zero-value IssueType defaults to TypeTask.
+func (c *Client) CreateTask(ctx context.Context, req TaskRequest) (*beadslib.Issue, error) {
+	status := beadslib.Status(req.Status)
+	if status == "" {
+		status = beadslib.StatusOpen
 	}
-	if err := c.storage.CreateIssue(ctx, issue, actor); err != nil {
-		return nil, fmt.Errorf("creating task %q: %w", title, err)
+	issueType := beadslib.IssueType(req.IssueType)
+	if issueType == "" {
+		issueType = beadslib.TypeTask
+	}
+	issue := &beadslib.Issue{
+		Title:              req.Title,
+		Description:        req.Description,
+		Status:             status,
+		Priority:           req.Priority,
+		IssueType:          issueType,
+		Assignee:           req.Assignee,
+		AcceptanceCriteria: req.AcceptanceCriteria,
+		Notes:              req.Notes,
+		CreatedBy:          req.Actor,
+	}
+	if req.EstimatedMinutes > 0 {
+		issue.EstimatedMinutes = &req.EstimatedMinutes
+	}
+	if req.DueAt != "" {
+		if t, err := time.Parse("2006-01-02", req.DueAt); err == nil {
+			issue.DueAt = &t
+		}
+	}
+	for _, l := range strings.Split(req.Labels, ",") {
+		if l = strings.TrimSpace(l); l != "" {
+			issue.Labels = append(issue.Labels, l)
+		}
+	}
+	if err := c.storage.CreateIssue(ctx, issue, req.Actor); err != nil {
+		return nil, fmt.Errorf("creating task %q: %w", req.Title, err)
 	}
 	return issue, nil
 }

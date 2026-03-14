@@ -13,6 +13,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/auth"
@@ -68,12 +69,29 @@ type TaskRecord struct {
 	Status string
 }
 
+// TaskCreateRequest carries all user-editable fields for creating a new task.
+// Zero values are treated as "not set"; the TaskManager implementation applies defaults.
+type TaskCreateRequest struct {
+	Title              string
+	Description        string
+	Status             string // kanban column name; TaskManager defaults to first column if empty
+	Priority           int    // 0=critical 1=high 2=normal 3=low
+	IssueType          string // "task", "bug", "feature", "epic", "chore"
+	Assignee           string
+	EstimatedMinutes   int    // 0 = unset
+	AcceptanceCriteria string
+	Notes              string
+	DueAt              string // "YYYY-MM-DD" or ""
+	Labels             string // comma-separated
+	Actor              string
+}
+
 // TaskManager handles task creation and status updates for the kanban board
 // and the bot task-status callback endpoint.
 type TaskManager interface {
 	UpdateStatus(ctx context.Context, issueID, newStatus, note, actor string) error
 	GetTask(ctx context.Context, issueID string) (TaskRecord, error)
-	CreateTask(ctx context.Context, title, description, actor string, priority int) (TaskRecord, error)
+	CreateTask(ctx context.Context, req TaskCreateRequest) (TaskRecord, error)
 }
 
 // --------------------------------------------------------------------------
@@ -91,6 +109,7 @@ type Server struct {
 	capacityReader CapacityReader  // optional; capacity columns hidden if nil
 	taskManager    TaskManager     // optional; kanban actions and bot callbacks disabled if nil
 	kanban         KanbanBuilder
+	kanbanColumns  []string        // ordered column names, used by task-create form
 	store          *store.Store
 	tmpl           map[string]*template.Template
 	mux            *http.ServeMux
@@ -120,6 +139,11 @@ func WithCapacityReader(cr CapacityReader) ServerOption {
 
 // WithTaskManager sets the optional TaskManager for kanban actions and bot callbacks.
 func WithTaskManager(tm TaskManager) ServerOption { return func(s *Server) { s.taskManager = tm } }
+
+// WithKanbanColumns sets the ordered column names shown in the task-creation form.
+func WithKanbanColumns(cols []string) ServerOption {
+	return func(s *Server) { s.kanbanColumns = cols }
+}
 
 // WithSetupMode puts the server into first-run setup mode.
 // In this mode all /admin/* requests (except /admin/setup and /admin/login)
@@ -199,6 +223,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /admin/bots/{name}/remove", protected(http.HandlerFunc(s.handleBotRemove)))
 	s.mux.Handle("POST /admin/bots/{name}/check", protected(http.HandlerFunc(s.handleBotCheck)))
 	s.mux.Handle("GET /admin/kanban", protected(http.HandlerFunc(s.handleKanban)))
+	s.mux.Handle("GET /admin/kanban/tasks/new", protected(http.HandlerFunc(s.handleKanbanTaskNew)))
 	s.mux.Handle("POST /admin/kanban/tasks", protected(http.HandlerFunc(s.handleKanbanTaskCreate)))
 	s.mux.Handle("POST /admin/kanban/tasks/{id}/status", protected(http.HandlerFunc(s.handleKanbanTaskStatus)))
 	s.mux.Handle("GET /admin/secrets", protected(http.HandlerFunc(s.handleSecretsPage)))
@@ -403,6 +428,32 @@ func (s *Server) handleKanbanTaskStatus(w http.ResponseWriter, r *http.Request) 
 	http.Redirect(w, r, "/admin/kanban", http.StatusSeeOther)
 }
 
+// handleKanbanTaskNew renders the full task-creation form.
+func (s *Server) handleKanbanTaskNew(w http.ResponseWriter, r *http.Request) {
+	type createData struct {
+		Columns    []string
+		IssueTypes []struct{ Value, Label string }
+		Priorities []struct {
+			Value int
+			Label string
+		}
+	}
+	data := createData{
+		Columns: s.kanbanColumns,
+		IssueTypes: []struct{ Value, Label string }{
+			{"task", "Task"}, {"bug", "Bug"}, {"feature", "Feature"},
+			{"epic", "Epic"}, {"chore", "Chore"},
+		},
+		Priorities: []struct {
+			Value int
+			Label string
+		}{
+			{0, "Critical"}, {1, "High"}, {2, "Normal"}, {3, "Low"},
+		},
+	}
+	s.render(w, "task-create.html", pageData{Title: "New Task", Data: data})
+}
+
 func (s *Server) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Request) {
 	if s.taskManager == nil {
 		http.Redirect(w, r, "/admin/kanban", http.StatusSeeOther)
@@ -417,7 +468,29 @@ func (s *Server) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Request) 
 		http.Redirect(w, r, "/admin/kanban", http.StatusSeeOther)
 		return
 	}
-	if _, err := s.taskManager.CreateTask(r.Context(), title, "", "admin", 2); err != nil {
+	priority := 2
+	if p, err := strconv.Atoi(r.FormValue("priority")); err == nil {
+		priority = p
+	}
+	estMins := 0
+	if e, err := strconv.Atoi(r.FormValue("estimated_minutes")); err == nil && e > 0 {
+		estMins = e
+	}
+	req := TaskCreateRequest{
+		Title:              title,
+		Description:        r.FormValue("description"),
+		Status:             r.FormValue("status"),
+		Priority:           priority,
+		IssueType:          r.FormValue("issue_type"),
+		Assignee:           r.FormValue("assignee"),
+		EstimatedMinutes:   estMins,
+		AcceptanceCriteria: r.FormValue("acceptance_criteria"),
+		Notes:              r.FormValue("notes"),
+		DueAt:              r.FormValue("due_at"),
+		Labels:             r.FormValue("labels"),
+		Actor:              "admin",
+	}
+	if _, err := s.taskManager.CreateTask(r.Context(), req); err != nil {
 		slog.Error("creating kanban task", "title", title, "error", err)
 	}
 	http.Redirect(w, r, "/admin/kanban", http.StatusSeeOther)

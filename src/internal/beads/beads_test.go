@@ -35,7 +35,7 @@ func TestCreateTask(t *testing.T) {
 	m := newMockStorage()
 	c := NewWithStorage(m)
 
-	issue, err := c.CreateTask(ctx, "Fix the bug", "A description", "U123", 1)
+	issue, err := c.CreateTask(ctx, TaskRequest{Title: "Fix the bug", Description: "A description", Actor: "U123", Priority: 1})
 	require.NoError(t, err)
 	require.NotEmpty(t, issue.ID)
 	require.Equal(t, "Fix the bug", issue.Title)
@@ -52,7 +52,7 @@ func TestCreateTaskError(t *testing.T) {
 	m.createErr = errors.New("db error")
 	c := NewWithStorage(m)
 
-	_, err := c.CreateTask(ctx, "title", "", "actor", 1)
+	_, err := c.CreateTask(ctx, TaskRequest{Title: "title", Description: "", Actor: "actor", Priority: 1})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "db error")
 }
@@ -62,7 +62,7 @@ func TestAssignTask(t *testing.T) {
 	m := newMockStorage()
 	c := NewWithStorage(m)
 
-	issue, err := c.CreateTask(ctx, "Task to assign", "", "actor", 2)
+	issue, err := c.CreateTask(ctx, TaskRequest{Title: "Task to assign", Description: "", Actor: "actor", Priority: 2})
 	require.NoError(t, err)
 
 	require.NoError(t, c.AssignTask(ctx, issue.ID, "mybot", "actor"))
@@ -79,7 +79,7 @@ func TestAssignTaskError(t *testing.T) {
 	m.updateErr = errors.New("update failed")
 	c := NewWithStorage(m)
 
-	issue, _ := c.CreateTask(ctx, "t", "", "a", 1)
+	issue, _ := c.CreateTask(ctx, TaskRequest{Title: "t", Description: "", Actor: "a", Priority: 1})
 	m.updateErr = errors.New("update failed") // set after create
 	err := c.AssignTask(ctx, issue.ID, "bot", "a")
 	require.Error(t, err)
@@ -90,7 +90,7 @@ func TestCloseTask(t *testing.T) {
 	m := newMockStorage()
 	c := NewWithStorage(m)
 
-	issue, err := c.CreateTask(ctx, "Task to close", "", "actor", 2)
+	issue, err := c.CreateTask(ctx, TaskRequest{Title: "Task to close", Description: "", Actor: "actor", Priority: 2})
 	require.NoError(t, err)
 
 	require.NoError(t, c.CloseTask(ctx, issue.ID, "done", "actor"))
@@ -106,9 +106,9 @@ func TestListReadyWork(t *testing.T) {
 	m := newMockStorage()
 	c := NewWithStorage(m)
 
-	_, err := c.CreateTask(ctx, "Task 1", "", "actor", 1)
+	_, err := c.CreateTask(ctx, TaskRequest{Title: "Task 1", Description: "", Actor: "actor", Priority: 1})
 	require.NoError(t, err)
-	t2, err := c.CreateTask(ctx, "Task 2", "", "actor", 2)
+	t2, err := c.CreateTask(ctx, TaskRequest{Title: "Task 2", Description: "", Actor: "actor", Priority: 2})
 	require.NoError(t, err)
 	// Assign Task 2 — it should not appear in ready work.
 	require.NoError(t, c.AssignTask(ctx, t2.ID, "somebot", "actor"))
@@ -124,7 +124,7 @@ func TestRouteToBot(t *testing.T) {
 	m := newMockStorage()
 	c := NewWithStorage(m)
 
-	issue, err := c.CreateTask(ctx, "Task to route", "", "actor", 1)
+	issue, err := c.CreateTask(ctx, TaskRequest{Title: "Task to route", Description: "", Actor: "actor", Priority: 1})
 	require.NoError(t, err)
 
 	require.NoError(t, c.RouteToBot(ctx, issue.ID, "targetbot", "actor"))
@@ -139,7 +139,7 @@ func TestAddComment(t *testing.T) {
 	m := newMockStorage()
 	c := NewWithStorage(m)
 
-	issue, err := c.CreateTask(ctx, "Commented task", "", "actor", 1)
+	issue, err := c.CreateTask(ctx, TaskRequest{Title: "Commented task", Description: "", Actor: "actor", Priority: 1})
 	require.NoError(t, err)
 
 	require.NoError(t, c.AddComment(ctx, issue.ID, "actor", "great task!"))
@@ -152,9 +152,9 @@ func TestListAll(t *testing.T) {
 	m := newMockStorage()
 	c := NewWithStorage(m)
 
-	_, err := c.CreateTask(ctx, "T1", "", "a", 1)
+	_, err := c.CreateTask(ctx, TaskRequest{Title: "T1", Description: "", Actor: "a", Priority: 1})
 	require.NoError(t, err)
-	_, err = c.CreateTask(ctx, "T2", "", "a", 1)
+	_, err = c.CreateTask(ctx, TaskRequest{Title: "T2", Description: "", Actor: "a", Priority: 1})
 	require.NoError(t, err)
 
 	all, err := c.ListAll(ctx, beadslib.IssueFilter{})

@@ -13,7 +13,7 @@ func TestUpdateStatusNoNote(t *testing.T) {
 	m := newMockStorage()
 	c := NewWithStorage(m)
 
-	issue, err := c.CreateTask(context.Background(), "fix bug", "", "alice", 1)
+	issue, err := c.CreateTask(context.Background(), TaskRequest{Title: "fix bug", Description: "", Actor: "alice", Priority: 1})
 	require.NoError(t, err)
 
 	require.NoError(t, c.UpdateStatus(context.Background(), issue.ID, "in_progress", "", "alice"))
@@ -28,7 +28,7 @@ func TestUpdateStatusWithNote(t *testing.T) {
 	m := newMockStorage()
 	c := NewWithStorage(m)
 
-	issue, err := c.CreateTask(context.Background(), "deploy service", "", "bob", 2)
+	issue, err := c.CreateTask(context.Background(), TaskRequest{Title: "deploy service", Description: "", Actor: "bob", Priority: 2})
 	require.NoError(t, err)
 
 	require.NoError(t, c.UpdateStatus(context.Background(), issue.ID, "blocked", "waiting on infra", "bob"))
@@ -45,7 +45,7 @@ func TestUpdateStatusCommentError(t *testing.T) {
 	m.commentErr = errors.New("comment storage down")
 	c := NewWithStorage(m)
 
-	issue, err := c.CreateTask(context.Background(), "task", "", "a", 1)
+	issue, err := c.CreateTask(context.Background(), TaskRequest{Title: "task", Description: "", Actor: "a", Priority: 1})
 	require.NoError(t, err)
 
 	err = c.UpdateStatus(context.Background(), issue.ID, "done", "closing note", "a")
@@ -58,7 +58,7 @@ func TestUpdateStatusUpdateError(t *testing.T) {
 	m.updateErr = errors.New("update storage down")
 	c := NewWithStorage(m)
 
-	issue, err := c.CreateTask(context.Background(), "task", "", "a", 1)
+	issue, err := c.CreateTask(context.Background(), TaskRequest{Title: "task", Description: "", Actor: "a", Priority: 1})
 	require.NoError(t, err)
 
 	err = c.UpdateStatus(context.Background(), issue.ID, "done", "", "a")

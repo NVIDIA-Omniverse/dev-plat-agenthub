@@ -62,8 +62,8 @@ func (m *mockTaskManager) UpdateStatus(_ context.Context, _, _, _, _ string) err
 func (m *mockTaskManager) GetTask(_ context.Context, _ string) (TaskRecord, error) {
 	return m.record, m.err
 }
-func (m *mockTaskManager) CreateTask(_ context.Context, title, _, _ string, _ int) (TaskRecord, error) {
-	return TaskRecord{ID: "t1", Title: title, Status: "open"}, m.err
+func (m *mockTaskManager) CreateTask(_ context.Context, req TaskCreateRequest) (TaskRecord, error) {
+	return TaskRecord{ID: "t1", Title: req.Title, Status: "open"}, m.err
 }
 
 func testServerWithDeleterChecker(t *testing.T, d BotDeleter, c BotChecker) *Server {

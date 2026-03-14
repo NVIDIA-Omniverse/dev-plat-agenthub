@@ -152,6 +152,7 @@ func cmdServe(_ []string) error {
 		api.WithRegistrar(db),
 		api.WithHealthProber(&openclawProber{cfg: cfg.Openclaw, timeout: cfg.Openclaw.LivenessTimeout}),
 		api.WithCapacityReader(db),
+		api.WithKanbanColumns(cfg.Kanban.Columns),
 	}
 	if beadsClient != nil {
 		opts = append(opts, api.WithTaskManager(&beadsTaskManager{client: beadsClient}))
@@ -422,7 +423,7 @@ func loadTemplates() (map[string]*template.Template, error) {
 	}
 	pages := []string{
 		"login.html", "setup.html", "dashboard.html",
-		"bots.html", "kanban.html", "secrets.html",
+		"bots.html", "kanban.html", "secrets.html", "task-create.html",
 	}
 	out := make(map[string]*template.Template, len(pages)+1)
 	for _, page := range pages {
@@ -530,8 +531,21 @@ func (m *beadsTaskManager) GetTask(ctx context.Context, id string) (api.TaskReco
 	return api.TaskRecord{ID: issue.ID, Title: issue.Title, Status: string(issue.Status)}, nil
 }
 
-func (m *beadsTaskManager) CreateTask(ctx context.Context, title, desc, actor string, priority int) (api.TaskRecord, error) {
-	issue, err := m.client.CreateTask(ctx, title, desc, actor, priority)
+func (m *beadsTaskManager) CreateTask(ctx context.Context, req api.TaskCreateRequest) (api.TaskRecord, error) {
+	issue, err := m.client.CreateTask(ctx, beads.TaskRequest{
+		Title:              req.Title,
+		Description:        req.Description,
+		Status:             req.Status,
+		Priority:           req.Priority,
+		IssueType:          req.IssueType,
+		Assignee:           req.Assignee,
+		EstimatedMinutes:   req.EstimatedMinutes,
+		AcceptanceCriteria: req.AcceptanceCriteria,
+		Notes:              req.Notes,
+		DueAt:              req.DueAt,
+		Labels:             req.Labels,
+		Actor:              req.Actor,
+	})
 	if err != nil {
 		return api.TaskRecord{}, err
 	}
@@ -685,7 +699,7 @@ func (m *slackTaskManager) CreateAndRoute(ctx context.Context, desc, botName, ac
 	if m.beads == nil {
 		return "", "", fmt.Errorf("beads not configured")
 	}
-	issue, err := m.beads.CreateTask(ctx, desc, "", actor, 2)
+	issue, err := m.beads.CreateTask(ctx, beads.TaskRequest{Title: desc, Actor: actor, Priority: 2})
 	if err != nil {
 		return "", "", fmt.Errorf("creating task: %w", err)
 	}

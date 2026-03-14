@@ -100,7 +100,12 @@ func (s *Server) handleBotTaskCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := s.taskManager.CreateTask(r.Context(), req.Title, req.Description, actor, req.Priority)
+	task, err := s.taskManager.CreateTask(r.Context(), TaskCreateRequest{
+		Title:       req.Title,
+		Description: req.Description,
+		Actor:       actor,
+		Priority:    req.Priority,
+	})
 	if err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
