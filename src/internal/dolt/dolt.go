@@ -258,6 +258,28 @@ var migrations = []migration{
 			KEY idx_ta_agent (agent_id)
 		)`,
 	},
+	{
+		Name: "010_alter_openclaw_instances_status",
+		SQL: `ALTER TABLE openclaw_instances
+			ADD COLUMN current_task   VARCHAR(255) NOT NULL DEFAULT '',
+			ADD COLUMN agent_status   VARCHAR(64)  NOT NULL DEFAULT 'idle',
+			ADD COLUMN status_message TEXT         NOT NULL DEFAULT ''`,
+	},
+	{
+		Name: "011_create_inbox_messages",
+		SQL: `CREATE TABLE IF NOT EXISTS inbox_messages (
+			id           VARCHAR(64)  NOT NULL,
+			bot_name     VARCHAR(255) NOT NULL,
+			from_user    VARCHAR(255) NOT NULL DEFAULT '',
+			channel      VARCHAR(255) NOT NULL DEFAULT '',
+			body         TEXT         NOT NULL DEFAULT '',
+			task_context JSON         NOT NULL DEFAULT ('{}'),
+			created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			acked_at     TIMESTAMP    NULL,
+			PRIMARY KEY (id),
+			KEY idx_bot_name_acked (bot_name, acked_at)
+		)`,
+	},
 }
 
 // Instance represents a registered openclaw bot.
@@ -372,6 +394,19 @@ func (db *DB) UpdateAliveByName(ctx context.Context, name string, alive bool) er
 		SET is_alive = ?, last_seen_at = ?, updated_at = ?
 		WHERE name = ?`,
 		boolToInt(alive), now, now, name,
+	)
+	return err
+}
+
+// UpdateHeartbeat persists all heartbeat fields for an instance by name.
+// Sets is_alive=1, last_seen_at=NOW(), and the status fields.
+func (db *DB) UpdateHeartbeat(ctx context.Context, name, currentTask, status, message string) error {
+	now := time.Now()
+	_, err := db.ExecContext(ctx, `
+		UPDATE openclaw_instances
+		SET is_alive = 1, last_seen_at = ?, current_task = ?, agent_status = ?, status_message = ?, updated_at = ?
+		WHERE name = ?`,
+		now, currentTask, status, message, now, name,
 	)
 	return err
 }

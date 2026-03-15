@@ -50,14 +50,23 @@ type InboxMessage struct {
 
 // Inbox is a concurrent per-bot in-memory message queue.
 // Messages remain in the queue until Poll or Ack removes them.
+// When a db is set via SetDB, Inbox acts as a write-through cache backed by the database.
 type Inbox struct {
 	mu     sync.Mutex
 	queues map[string][]*InboxMessage
 	seq    atomic.Uint64
+	db     InboxDB // optional; set via SetDB
 }
 
 func newInbox() *Inbox {
 	return &Inbox{queues: make(map[string][]*InboxMessage)}
+}
+
+// SetDB wires an optional database backend for durable message storage.
+func (b *Inbox) SetDB(db InboxDB) {
+	b.mu.Lock()
+	b.db = db
+	b.mu.Unlock()
 }
 
 // Enqueue adds a message to botName's queue and returns the new message ID.
@@ -79,7 +88,15 @@ func (b *Inbox) EnqueueWithContext(botName, from, channel, text string, tc *Task
 	}
 	b.mu.Lock()
 	b.queues[botName] = append(b.queues[botName], msg)
+	db := b.db
 	b.mu.Unlock()
+
+	// Persist to DB if available (write-through cache).
+	if db != nil {
+		dbMsg := inboxMessageToDB(botName, msg)
+		_ = db.CreateInboxMessage(context.Background(), dbMsg)
+	}
+
 	return msg.ID
 }
 
@@ -121,6 +138,44 @@ func (b *Inbox) Ack(botName, msgID string) bool {
 	return false
 }
 
+// inboxMessageToDB converts an in-memory InboxMessage to a dolt.InboxDBMessage.
+func inboxMessageToDB(botName string, msg *InboxMessage) dolt.InboxDBMessage {
+	var tcJSON []byte
+	if msg.TaskContext != nil {
+		tcJSON, _ = json.Marshal(msg.TaskContext)
+	}
+	if len(tcJSON) == 0 {
+		tcJSON = []byte("{}")
+	}
+	return dolt.InboxDBMessage{
+		ID:          msg.ID,
+		BotName:     botName,
+		FromUser:    msg.From,
+		Channel:     msg.Channel,
+		Body:        msg.Text,
+		TaskContext: tcJSON,
+		CreatedAt:   msg.CreatedAt,
+	}
+}
+
+// dbMessageToInbox converts a dolt.InboxDBMessage to an in-memory InboxMessage.
+func dbMessageToInbox(m *dolt.InboxDBMessage) *InboxMessage {
+	msg := &InboxMessage{
+		ID:        m.ID,
+		From:      m.FromUser,
+		Channel:   m.Channel,
+		Text:      m.Body,
+		CreatedAt: m.CreatedAt,
+	}
+	if len(m.TaskContext) > 0 && string(m.TaskContext) != "{}" {
+		var tc TaskContext
+		if err := json.Unmarshal(m.TaskContext, &tc); err == nil {
+			msg.TaskContext = &tc
+		}
+	}
+	return msg
+}
+
 // getMessage returns a message by ID without removing it (used before reply).
 func (b *Inbox) getMessage(botName, msgID string) *InboxMessage {
 	b.mu.Lock()
@@ -138,7 +193,7 @@ func (b *Inbox) getMessage(botName, msgID string) *InboxMessage {
 // --------------------------------------------------------------------------
 
 // handleInboxPoll handles GET /api/inbox.
-// Returns and dequeues all pending messages for the calling agent.
+// Returns all pending messages for the calling agent without removing them.
 func (s *Server) handleInboxPoll(w http.ResponseWriter, r *http.Request) {
 	if !s.validateRegistrationToken(r) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
@@ -149,7 +204,24 @@ func (s *Server) handleInboxPoll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"X-Bot-Name header required"}`, http.StatusBadRequest)
 		return
 	}
-	msgs := s.inbox.Poll(botName)
+
+	var msgs []*InboxMessage
+	// Prefer DB if available for durable read.
+	if s.inbox.db != nil {
+		if dbMsgs, err := s.inbox.db.ListPendingMessages(r.Context(), botName); err == nil {
+			msgs = make([]*InboxMessage, 0, len(dbMsgs))
+			for _, m := range dbMsgs {
+				msgs = append(msgs, dbMessageToInbox(m))
+			}
+		} else {
+			msgs = s.inbox.Poll(botName)
+		}
+	} else {
+		msgs = s.inbox.Poll(botName)
+	}
+	if msgs == nil {
+		msgs = []*InboxMessage{}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(msgs)
 }
@@ -164,6 +236,9 @@ func (s *Server) handleInboxAck(w http.ResponseWriter, r *http.Request) {
 	botName := r.Header.Get("X-Bot-Name")
 	msgID := r.PathValue("id")
 	s.inbox.Ack(botName, msgID) // ignore not-found; idempotent
+	if s.inbox.db != nil {
+		_ = s.inbox.db.AckInboxMessage(r.Context(), msgID)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

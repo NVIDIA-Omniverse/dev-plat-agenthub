@@ -42,6 +42,18 @@ type BotAliveUpdater interface {
 	UpdateAliveByName(ctx context.Context, name string, alive bool) error
 }
 
+// BotHeartbeater persists all heartbeat fields to the database.
+type BotHeartbeater interface {
+	UpdateHeartbeat(ctx context.Context, name, currentTask, status, message string) error
+}
+
+// InboxDB persists inbox messages to the database.
+type InboxDB interface {
+	CreateInboxMessage(ctx context.Context, msg dolt.InboxDBMessage) error
+	ListPendingMessages(ctx context.Context, botName string) ([]*dolt.InboxDBMessage, error)
+	AckInboxMessage(ctx context.Context, id string) error
+}
+
 // BotChecker performs an on-demand liveness probe for a named bot.
 type BotChecker interface {
 	CheckBot(ctx context.Context, name string) (alive bool, err error)
@@ -245,6 +257,10 @@ func NewServer(
 	}
 	for _, o := range opts {
 		o(s)
+	}
+	// Wire DB-backed inbox if the db satisfies InboxDB.
+	if idb, ok := s.db.(InboxDB); ok {
+		s.inbox.SetDB(idb)
 	}
 	s.registerRoutes()
 	return s
@@ -785,8 +801,7 @@ func (s *Server) handleKanbanTaskAssign(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleKanbanAgents returns the agents pane fragment for the split kanban view.
-// An agent is shown as alive if it is marked alive in the DB OR if it has
-// sent a heartbeat within the last 2 minutes (outbound-only / cross-network agents).
+// An agent is shown as alive if its DB last_seen_at is within the last 2 minutes.
 func (s *Server) handleKanbanAgents(w http.ResponseWriter, r *http.Request) {
 	type agentRow struct {
 		Name    string
@@ -796,29 +811,16 @@ func (s *Server) handleKanbanAgents(w http.ResponseWriter, r *http.Request) {
 	const heartbeatWindow = 2 * time.Minute
 	now := time.Now().UTC()
 
-	// Build a set of recently-heartbeating bot names.
-	recent := map[string]bool{}
-	for _, bs := range s.heartbeats.All() {
-		if now.Sub(bs.LastSeen) <= heartbeatWindow {
-			recent[bs.BotName] = true
-		}
-	}
-
-	seen := map[string]bool{}
 	var rows []agentRow
 	if s.db != nil {
 		if insts, err := s.db.ListAllInstances(r.Context()); err == nil {
 			for _, inst := range insts {
-				alive := inst.IsAlive || recent[inst.Name]
+				alive := inst.IsAlive
+				if !alive && inst.LastSeenAt != nil {
+					alive = now.Sub(*inst.LastSeenAt) <= heartbeatWindow
+				}
 				rows = append(rows, agentRow{Name: inst.Name, IsAlive: alive})
-				seen[inst.Name] = true
 			}
-		}
-	}
-	// Show heartbeating agents that aren't in the DB yet (not yet registered).
-	for name := range recent {
-		if !seen[name] {
-			rows = append(rows, agentRow{Name: name, IsAlive: true})
 		}
 	}
 	s.renderFragment(w, "kanban-agents", pageData{Data: rows})

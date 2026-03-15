@@ -104,9 +104,9 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 	s.heartbeats.Update(botName, req.CurrentTask, req.Status, req.Message)
 
-	// Persist liveness to the DB so the bots page reflects current status.
-	if updater, ok := s.db.(BotAliveUpdater); ok {
-		_ = updater.UpdateAliveByName(r.Context(), botName, true)
+	// Persist all heartbeat fields to the DB.
+	if hb, ok := s.db.(BotHeartbeater); ok {
+		_ = hb.UpdateHeartbeat(r.Context(), botName, req.CurrentTask, req.Status, req.Message)
 	}
 
 	s.events.Broadcast("heartbeat", botName)
