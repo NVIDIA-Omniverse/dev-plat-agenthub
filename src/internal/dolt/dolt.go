@@ -34,11 +34,14 @@ func Open(dsn string) (*DB, error) {
 		return nil, fmt.Errorf("parsing dolt dsn: %w", err)
 	}
 
+	// Ensure TIMESTAMP columns are scanned as time.Time, not []byte.
+	cfg.ParseTime = true
+
 	if err := ensureDatabase(cfg); err != nil {
 		return nil, err
 	}
 
-	db, err := sql.Open("mysql", dsn)
+	db, err := sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {
 		return nil, fmt.Errorf("opening dolt connection: %w", err)
 	}
