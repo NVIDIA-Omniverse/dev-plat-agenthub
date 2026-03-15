@@ -41,6 +41,7 @@ AI agent sessions that span multiple commits get a narrative section below the l
 | `e8dc270` | jordanh `jordanh@nvidia.com` | 2026-03-14 | Task detail slide-over panel: clicking a kanban card pops a full-field editor; "+ Add" opens the full create form in the same panel; Save/Cancel/Close with dirty-state detection. |
 
 | `36d7aaf` | Claude Sonnet 4.6 | 2026-03-14 | Fix agent task-assignment loop: enqueue inbox message on kanban assign + block bot DM feedback loop that was creating 40+ chained tasks. |
+| `(pending)` | Claude Sonnet 4.6 | 2026-03-14 | Bot Father: name uniqueness enforcement with suggestions, simtech-sandbox registration announcements, @botname DM routing. Cleared 8800+ junk beads. |
 
 ---
 

@@ -201,10 +201,12 @@ func (h *Handler) handleAPIEvent(ctx context.Context, event slackevents.EventsAP
 			return
 		}
 		// BOTJILE: every DM to agenthub that looks like work gets a bead.
-		// Create the task first so it's on the board before we even respond.
+		// If the message starts with "@botname " route it to that specific agent;
+		// otherwise route to any available bot.
 		var taskRef string
 		if h.deps.TaskManager != nil && ev.Text != "" {
-			taskID, assignedBot, err := h.deps.TaskManager.CreateAndRoute(ctx, ev.Text, "", ev.User)
+			targetBot, taskText := parseAgentPrefix(ev.Text)
+			taskID, assignedBot, err := h.deps.TaskManager.CreateAndRoute(ctx, taskText, targetBot, ev.User)
 			if err != nil {
 				slog.Warn("slack: could not create task from DM", "error", err)
 			} else {
@@ -214,7 +216,7 @@ func (h *Handler) handleAPIEvent(ctx context.Context, event slackevents.EventsAP
 					// Queue the original DM in the assigned bot's inbox so the
 					// agent can read the full text (not just the task title).
 					if h.deps.Inbox != nil {
-						h.deps.Inbox.Enqueue(assignedBot, ev.User, ev.Channel, ev.Text)
+						h.deps.Inbox.Enqueue(assignedBot, ev.User, ev.Channel, taskText)
 					}
 				}
 				taskRef += ".\n"
@@ -229,6 +231,37 @@ func (h *Handler) handleAPIEvent(ctx context.Context, event slackevents.EventsAP
 			slack.MsgOptionText(taskRef+response, false),
 		)
 	}
+}
+
+// parseAgentPrefix checks if text starts with "@botname " and extracts the bot
+// name and the remaining task text. Returns ("", text) if no prefix is found.
+// Supports formats:
+//
+//	@my-agent do the thing
+//	@my-agent: do the thing
+func parseAgentPrefix(text string) (botName, taskText string) {
+	text = trimSpace(text)
+	if len(text) == 0 || text[0] != '@' {
+		return "", text
+	}
+	// Find end of the bot name (space or colon).
+	end := 1
+	for end < len(text) && text[end] != ' ' && text[end] != ':' {
+		end++
+	}
+	if end == 1 {
+		return "", text // lone "@"
+	}
+	name := text[1:end]
+	rest := text[end:]
+	// Strip leading colon and spaces from the rest.
+	for len(rest) > 0 && (rest[0] == ':' || rest[0] == ' ') {
+		rest = rest[1:]
+	}
+	if rest == "" {
+		return "", text // nothing after the mention
+	}
+	return name, rest
 }
 
 // stripMention removes the leading <@USERID> mention from a message.

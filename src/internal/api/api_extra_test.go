@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -500,6 +501,35 @@ func TestHandleRegisterRegistrarError(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, r)
 	require.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestHandleRegisterNameConflict(t *testing.T) {
+	// Registering an agent with a name that is already taken returns 409
+	// with alternative suggestions so the client can re-prompt.
+	srv, _, st := testServer(t)
+	require.NoError(t, st.Set("registration_token", "tok"))
+	srv.registrar = &mockBotRegistrar{}
+	// Seed the db with an existing bot named "mybot".
+	srv.db.(*mockBotLister).instances = []*dolt.Instance{{ID: "id1", Name: "mybot", IsAlive: true}}
+
+	r := httptest.NewRequest(http.MethodPost, "/api/register",
+		strings.NewReader(`{"name":"mybot","host":"1.2.3.4","port":8080}`))
+	r.Header.Set("X-Registration-Token", "tok")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+	var resp struct {
+		Error       string   `json:"error"`
+		Suggestions []string `json:"suggestions"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Contains(t, resp.Error, "mybot")
+	require.NotEmpty(t, resp.Suggestions)
+	// Suggestions should not include the taken name.
+	for _, s := range resp.Suggestions {
+		require.NotEqual(t, "mybot", s)
+	}
 }
 
 // --------------------------------------------------------------------------

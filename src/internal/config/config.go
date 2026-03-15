@@ -47,6 +47,7 @@ type SlackConfig struct {
 	SocketMode        bool          `yaml:"socket_mode"`
 	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
 	CommandPrefix     string        `yaml:"command_prefix"`
+	DefaultChannel    string        `yaml:"default_channel"` // channel ID for bot registration announcements + DM routing (e.g. simtech-sandbox)
 }
 
 // OpenclawConfig holds openclaw client and liveness settings.

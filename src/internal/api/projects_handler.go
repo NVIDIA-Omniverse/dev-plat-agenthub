@@ -49,6 +49,14 @@ func WithPublicURL(u string) ServerOption {
 	return func(s *Server) { s.publicURL = u }
 }
 
+// WithAnnouncer sets the Slack client and channel used for bot registration announcements.
+func WithAnnouncer(a BotAnnouncer, channelID string) ServerOption {
+	return func(s *Server) {
+		s.announcer = a
+		s.announceChannel = channelID
+	}
+}
+
 // --------------------------------------------------------------------------
 // Slack helpers
 // --------------------------------------------------------------------------

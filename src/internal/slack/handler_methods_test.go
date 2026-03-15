@@ -383,6 +383,29 @@ func TestHandleAPIEventMessageAIError(t *testing.T) {
 	})
 }
 
+// TestParseAgentPrefix verifies that @botname prefixes are parsed correctly.
+func TestParseAgentPrefix(t *testing.T) {
+	tests := []struct {
+		input    string
+		wantBot  string
+		wantText string
+	}{
+		{"@my-agent do the thing", "my-agent", "do the thing"},
+		{"@my-agent: do the thing", "my-agent", "do the thing"},
+		{"hello world", "", "hello world"},
+		{"@", "", "@"},
+		{"@bot", "", "@bot"}, // no task text after name
+		{"@bot  task", "bot", "task"},
+	}
+	for _, tt := range tests {
+		bot, text := parseAgentPrefix(tt.input)
+		if bot != tt.wantBot || text != tt.wantText {
+			t.Errorf("parseAgentPrefix(%q) = (%q, %q), want (%q, %q)",
+				tt.input, bot, text, tt.wantBot, tt.wantText)
+		}
+	}
+}
+
 // TestHandleAPIEventMessageFromBot verifies that messages with a bot_id are
 // silently ignored, preventing the feedback loop where an agent's Slack reply
 // is treated as a new task and re-routed back to the same agent.

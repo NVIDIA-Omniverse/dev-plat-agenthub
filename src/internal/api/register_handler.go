@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/dolt"
 )
@@ -22,6 +23,11 @@ type registerResponse struct {
 	Name string `json:"name"`
 }
 
+type nameConflictResponse struct {
+	Error       string   `json:"error"`
+	Suggestions []string `json:"suggestions"`
+}
+
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if !s.validateRegistrationToken(r) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
@@ -36,6 +42,24 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" || req.Host == "" || req.Port == 0 {
 		http.Error(w, `{"error":"name, host, and port are required"}`, http.StatusBadRequest)
 		return
+	}
+
+	// Check name uniqueness before anything else.
+	if s.db != nil {
+		if existing, err := s.db.ListAllInstances(r.Context()); err == nil {
+			for _, inst := range existing {
+				if strings.EqualFold(inst.Name, req.Name) {
+					suggestions := nameSuggestions(req.Name, existing)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusConflict)
+					_ = json.NewEncoder(w).Encode(nameConflictResponse{
+						Error:       fmt.Sprintf("agent name %q is already taken", req.Name),
+						Suggestions: suggestions,
+					})
+					return
+				}
+			}
+		}
 	}
 
 	// Verify the bot is reachable before registering, unless the caller
@@ -72,9 +96,44 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Announce the new agent to the default Slack channel.
+	if s.announcer != nil && s.announceChannel != "" {
+		msg := fmt.Sprintf(":robot_face: New agent *%s* has been registered and is ready for tasks!", req.Name)
+		if s.publicURL != "" {
+			msg += fmt.Sprintf("\n_Dashboard: %s/admin/bots_", s.publicURL)
+		}
+		_ = s.announcer.PostMessage(r.Context(), s.announceChannel, msg)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(registerResponse{ID: id, Name: req.Name})
+}
+
+// nameSuggestions returns a list of alternative names when the requested name is taken.
+func nameSuggestions(name string, existing []*dolt.Instance) []string {
+	taken := make(map[string]bool, len(existing))
+	for _, inst := range existing {
+		taken[strings.ToLower(inst.Name)] = true
+	}
+
+	var suggestions []string
+	candidates := []string{
+		name + "-2",
+		name + "-agent",
+		name + "-bot",
+		"my-" + name,
+		name + "-v2",
+	}
+	for _, c := range candidates {
+		if !taken[strings.ToLower(c)] {
+			suggestions = append(suggestions, c)
+			if len(suggestions) == 3 {
+				break
+			}
+		}
+	}
+	return suggestions
 }
 
 // newUUID generates a random UUID v4.

@@ -205,6 +205,12 @@ func cmdServe(_ []string) error {
 		replyClient := goslack.New(slackBotToken)
 		srv.SetReplier(&slackReplier{client: replyClient})
 
+		// Wire the announcer for new bot registration announcements.
+		if cfg.Slack.DefaultChannel != "" {
+			announceClient := goslack.New(slackBotToken)
+			srv.SetAnnouncer(&slackReplier{client: announceClient}, cfg.Slack.DefaultChannel)
+		}
+
 		slackDeps := &islack.Deps{
 			BotRegistry:   &doltBotRegistry{db: db, cfg: cfg.Openclaw},
 			TaskManager:   &slackTaskManager{beads: beadsClient, db: db},

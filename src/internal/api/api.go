@@ -65,6 +65,11 @@ type BotRegistrar interface {
 	CreateInstance(ctx context.Context, inst dolt.Instance) error
 }
 
+// BotAnnouncer posts a message to a Slack channel (used for registration announcements).
+type BotAnnouncer interface {
+	PostMessage(ctx context.Context, channel, text string) error
+}
+
 // HealthProber verifies a bot is reachable at the given host and port.
 type HealthProber interface {
 	Probe(ctx context.Context, host string, port int) error
@@ -168,6 +173,10 @@ type Server struct {
 	// Public URL used for Slack messages and credential URLs.
 	publicURL string
 
+	// announcer posts bot registration announcements to Slack.
+	announcer      BotAnnouncer
+	announceChannel string // Slack channel ID for registration announcements
+
 	// Always-present, no external dependencies.
 	inbox      *Inbox
 	heartbeats *HeartbeatRegistry
@@ -224,6 +233,12 @@ func (s *Server) Inbox() *Inbox { return s.inbox }
 // SetReplier sets the InboxReplier after server creation (used when the Slack
 // client is wired after NewServer returns).
 func (s *Server) SetReplier(ir InboxReplier) { s.replier = ir }
+
+// SetAnnouncer sets the BotAnnouncer and channel for registration announcements.
+func (s *Server) SetAnnouncer(a BotAnnouncer, channelID string) {
+	s.announcer = a
+	s.announceChannel = channelID
+}
 
 // pageData is the common data passed to every template.
 type pageData struct {

@@ -40,6 +40,8 @@ func cmdClientCreate(args []string) error {
 	r := bufio.NewReader(os.Stdin)
 
 	// ── 1. Agent name ─────────────────────────────────────────────────────────
+	// Name uniqueness is enforced by the server; we collect the name here and
+	// will validate it at registration time (step 9) with a re-prompt loop.
 	var name string
 	if len(args) > 0 {
 		name = strings.TrimSpace(args[0])
@@ -190,15 +192,40 @@ func cmdClientCreate(args []string) error {
 
 	fmt.Printf("\nConfig written to: %s\n", configDir)
 
-	// ── 9. Register with server ───────────────────────────────────────────────
+	// ── 9. Register with server (with name-uniqueness re-prompt) ─────────────
 	register := prompt(r, "Register agent with the server now? [Y/n]: ")
 	if !strings.EqualFold(strings.TrimSpace(register), "n") {
-		fmt.Printf("Registering %q with %s …\n", name, serverURL)
-		if err := registerAgent(serverURL, regToken, name, agentHost, portStr); err != nil {
+		for {
+			fmt.Printf("Registering %q with %s …\n", name, serverURL)
+			suggestions, err := registerAgent(serverURL, regToken, name, agentHost, portStr)
+			if err == nil {
+				fmt.Printf("Agent %q registered.\n", name)
+				break
+			}
+			if len(suggestions) > 0 {
+				fmt.Fprintf(os.Stderr, "\nName %q is already taken.\n", name)
+				fmt.Fprintf(os.Stderr, "Suggestions: %s\n\n", strings.Join(suggestions, ", "))
+				name = strings.TrimSpace(prompt(r, "Choose a different name: "))
+				if name == "" {
+					fmt.Fprintln(os.Stderr, "Registration skipped.")
+					break
+				}
+				// Rewrite the agent.env and scripts with the new name.
+				configDir, _ = agentConfigDir(name)
+				_ = os.MkdirAll(configDir, 0700)
+				envPath = filepath.Join(configDir, "agent.env")
+				loopPath = filepath.Join(configDir, "loop.sh")
+				startPath = filepath.Join(configDir, "start.sh")
+				_ = writeAgentEnv(envPath, name, agentHost, portStr, llmBaseURL, llmModel, llmAPIKey, serverURL, regToken)
+				_ = writeLoopScript(loopPath, name, envPath)
+				_ = writeStartScript(startPath, name, envPath, loopPath, llmModel, isLocal)
+				_ = writeBOTJILE(name, serverURL, regToken)
+				fmt.Printf("Config updated for agent %q → %s\n", name, configDir)
+				continue
+			}
 			fmt.Fprintf(os.Stderr, "warning: registration failed: %v\n", err)
 			fmt.Fprintln(os.Stderr, "You can re-register later by re-running this command.")
-		} else {
-			fmt.Printf("Agent %q registered.\n", name)
+			break
 		}
 	}
 
@@ -596,36 +623,49 @@ func agentConfigDir(name string) (string, error) {
 }
 
 // registerAgent calls POST /api/register?skip_probe=1 on the agenthub server.
-func registerAgent(serverURL, regToken, name, host, portStr string) error {
+// Returns (suggestions, nil) on 409 conflict so the caller can re-prompt.
+// Returns (nil, err) on other errors, (nil, nil) on success.
+func registerAgent(serverURL, regToken, name, host, portStr string) (suggestions []string, err error) {
 	type regReq struct {
 		Name string `json:"name"`
 		Host string `json:"host"`
 		Port int    `json:"port"`
 	}
 	var port int
-	if _, err := fmt.Sscanf(portStr, "%d", &port); err != nil {
-		return fmt.Errorf("invalid port %q: %w", portStr, err)
+	if _, scanErr := fmt.Sscanf(portStr, "%d", &port); scanErr != nil {
+		return nil, fmt.Errorf("invalid port %q: %w", portStr, scanErr)
 	}
 	body, err := json.Marshal(regReq{Name: name, Host: host, Port: port})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// skip_probe=1: server and agent may be on different networks.
 	req, err := http.NewRequest(http.MethodPost, serverURL+"/api/register?skip_probe=1", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Registration-Token", regToken)
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("HTTP request failed: %w", err)
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict {
+		// Server returns {"error":"...", "suggestions":["foo-2","foo-agent"]}
+		var conflict struct {
+			Error       string   `json:"error"`
+			Suggestions []string `json:"suggestions"`
+		}
+		if decErr := json.NewDecoder(resp.Body).Decode(&conflict); decErr == nil && len(conflict.Suggestions) > 0 {
+			return conflict.Suggestions, fmt.Errorf("%s", conflict.Error)
+		}
+		return []string{name + "-2", name + "-bot"}, fmt.Errorf("name %q is already taken", name)
+	}
 	if resp.StatusCode != http.StatusCreated {
 		msg, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
 	}
-	return nil
+	return nil, nil
 }
