@@ -37,9 +37,12 @@ func Open(dsn string) (*DB, error) {
 	// Ensure TIMESTAMP columns are scanned as time.Time, not []byte.
 	cfg.ParseTime = true
 
+	// ensureDatabase clears cfg.DBName; save and restore it afterwards.
+	dbName := cfg.DBName
 	if err := ensureDatabase(cfg); err != nil {
 		return nil, err
 	}
+	cfg.DBName = dbName
 
 	db, err := sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {
