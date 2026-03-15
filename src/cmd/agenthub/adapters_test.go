@@ -16,6 +16,7 @@ import (
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/beads"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/config"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/dolt"
+	"github.com/NVIDIA-DevPlat/agenthub/src/internal/settings"
 	"github.com/stretchr/testify/require"
 )
 
@@ -375,75 +376,85 @@ func TestSlackTaskManagerCreateError(t *testing.T) {
 // --------------------------------------------------------------------------
 // storeBackedChatter tests
 // --------------------------------------------------------------------------
+// reactiveChatter tests
+// --------------------------------------------------------------------------
 
-// mockSecretStore implements secretGetter for tests.
-type mockSecretStore struct{ secrets map[string]string }
+// testPersister is a no-op Persister for settings tests.
+type testPersister struct{ data map[string]string }
 
-func (m *mockSecretStore) Get(key string) (string, error) { return m.secrets[key], nil }
-
-func TestStoreBackedChatterNoKey(t *testing.T) {
-	// When no key is set, Respond returns ("", nil) — noop behaviour.
-	c := &storeBackedChatter{
-		store: &mockSecretStore{secrets: map[string]string{}},
-		cfg:   config.OpenAIConfig{Model: "test-model", MaxTokens: 16},
+func newTestPersister(d map[string]string) *testPersister {
+	if d == nil {
+		d = map[string]string{}
 	}
-	resp, err := c.Respond(context.Background(), "hello", "ch1")
+	return &testPersister{data: d}
+}
+func (p *testPersister) Set(k, v string) error   { p.data[k] = v; return nil }
+func (p *testPersister) Delete(k string) error    { delete(p.data, k); return nil }
+func (p *testPersister) Keys() []string           { ks := make([]string, 0); for k := range p.data { ks = append(ks, k) }; return ks }
+func (p *testPersister) Get(k string) (string, error) { return p.data[k], nil }
+
+func newTestSettings(d map[string]string) *settings.Store {
+	return settings.New(newTestPersister(d))
+}
+
+func fakeOpenAIServer(response string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id": "x", "object": "chat.completion", "created": 1, "model": "m",
+			"choices": []map[string]interface{}{
+				{"index": 0, "finish_reason": "stop",
+					"message": map[string]interface{}{"role": "assistant", "content": response}},
+			},
+		})
+	}))
+}
+
+func TestReactiveChatterNoKey(t *testing.T) {
+	s := newTestSettings(nil)
+	c := newReactiveChatter(s)
+	resp, err := c.Respond(context.Background(), "hello", "ch")
 	require.NoError(t, err)
 	require.Empty(t, resp)
 }
 
-func TestStoreBackedChatterWithKey(t *testing.T) {
-	// Fake OpenAI-compatible server.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"id": "chatcmpl-test", "object": "chat.completion", "created": 1234567890,
-			"model": "gpt-4o-mini",
-			"choices": []map[string]interface{}{
-				{"index": 0, "finish_reason": "stop",
-					"message": map[string]interface{}{"role": "assistant", "content": "Hello!"}},
-			},
-		})
-	}))
+func TestReactiveChatterWithKey(t *testing.T) {
+	srv := fakeOpenAIServer("Hello!")
 	defer srv.Close()
 
-	c := &storeBackedChatter{
-		store: &mockSecretStore{secrets: map[string]string{"openai_api_key": "fake-key"}},
-		cfg:   config.OpenAIConfig{BaseURL: srv.URL, Model: "gpt-4o-mini", MaxTokens: 16},
-	}
-	resp, err := c.Respond(context.Background(), "hello", "ch1")
+	s := newTestSettings(map[string]string{
+		"openai_api_key": "fake-key",
+		"openai.base_url": srv.URL,
+		"openai.model":    "m",
+		"openai.max_tokens_str": "16",
+	})
+	c := newReactiveChatter(s)
+
+	resp, err := c.Respond(context.Background(), "hi", "ch")
 	require.NoError(t, err)
 	require.Equal(t, "Hello!", resp)
 }
 
-func TestStoreBackedChatterKeySetLate(t *testing.T) {
-	// Verify the store is consulted on every call: key absent → empty, then key set → response.
-	secrets := map[string]string{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"id": "x", "object": "chat.completion", "created": 1,
-			"model": "m",
-			"choices": []map[string]interface{}{
-				{"index": 0, "finish_reason": "stop",
-					"message": map[string]interface{}{"role": "assistant", "content": "pong"}},
-			},
-		})
-	}))
+func TestReactiveChatterKeySetLate(t *testing.T) {
+	// Key absent at construction → noop. After Set via settings, Watch fires,
+	// client is rebuilt, next Respond succeeds — no restart needed.
+	srv := fakeOpenAIServer("pong")
 	defer srv.Close()
 
-	c := &storeBackedChatter{
-		store: &mockSecretStore{secrets: secrets},
-		cfg:   config.OpenAIConfig{BaseURL: srv.URL, Model: "m", MaxTokens: 16},
-	}
+	s := newTestSettings(map[string]string{
+		"openai.base_url": srv.URL,
+		"openai.model":    "m",
+		"openai.max_tokens_str": "16",
+	})
+	c := newReactiveChatter(s)
 
 	resp, err := c.Respond(context.Background(), "ping", "ch")
 	require.NoError(t, err)
 	require.Empty(t, resp) // no key yet
 
-	secrets["openai_api_key"] = "fake-key" // simulate 'agenthub secret set'
+	require.NoError(t, s.Set("openai_api_key", "fake-key")) // Watch fires, client rebuilt
 
 	resp, err = c.Respond(context.Background(), "ping", "ch")
 	require.NoError(t, err)
-	require.Equal(t, "pong", resp) // now live, no restart needed
+	require.Equal(t, "pong", resp)
 }

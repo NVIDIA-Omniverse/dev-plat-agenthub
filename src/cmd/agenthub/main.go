@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/kanban"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/openclaw"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/openai"
+	"github.com/NVIDIA-DevPlat/agenthub/src/internal/settings"
 	islack "github.com/NVIDIA-DevPlat/agenthub/src/internal/slack"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/store"
 	goslack "github.com/slack-go/slack"
@@ -128,13 +130,23 @@ func cmdServe(_ []string) error {
 		return fmt.Errorf("opening secrets store: %w", err)
 	}
 
-	adminHash, err := st.Get("admin_password_hash")
-	if err != nil {
+	// settings.Store is the single source of truth for all runtime configuration.
+	// It loads persisted values from the encrypted store, then seeds any YAML
+	// defaults for keys not yet set. All components read from it (O(1) memory);
+	// writes go through it so in-memory state + persistence update atomically.
+	sett := settings.New(st)
+	sett.Seed("openai.base_url", cfg.OpenAI.BaseURL)
+	sett.Seed("openai.model", cfg.OpenAI.Model)
+	sett.Seed("openai.max_tokens_str", fmt.Sprintf("%d", cfg.OpenAI.MaxTokens))
+	sett.Seed("openai.system_prompt", cfg.OpenAI.SystemPrompt)
+
+	adminHash := sett.Get("admin_password_hash")
+	if adminHash == "" {
 		return fmt.Errorf("admin password hash not found — run 'agenthub setup' first")
 	}
 
-	sessionSecret, err := st.Get("session_secret")
-	if err != nil {
+	sessionSecret := sett.Get("session_secret")
+	if sessionSecret == "" {
 		return fmt.Errorf("session secret not found — run 'agenthub setup' first")
 	}
 
@@ -208,11 +220,11 @@ func cmdServe(_ []string) error {
 	}
 
 	// Start Slack handler if tokens are available.
-	slackBotToken, _ := st.Get("slack_bot_token")
-	slackAppToken, _ := st.Get("slack_app_token")
+	slackBotToken := sett.Get("slack_bot_token")
+	slackAppToken := sett.Get("slack_app_token")
 	if slackBotToken != "" && slackAppToken != "" {
-		regToken, _ := st.Get("registration_token")
-		aiChat := &storeBackedChatter{store: st, cfg: cfg.OpenAI}
+		regToken := sett.Get("registration_token")
+		aiChat := newReactiveChatter(sett)
 		prober := &openclawProber{cfg: cfg.Openclaw, timeout: cfg.Openclaw.LivenessTimeout}
 
 		// Wire the replier so agents can post Slack replies via POST /api/inbox/{id}/reply.
@@ -400,13 +412,14 @@ func cmdSecret(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening secrets store: %w", err)
 	}
+	sett := settings.New(st)
 
 	switch args[0] {
 	case "set":
 		if len(args) != 3 {
 			return fmt.Errorf("usage: agenthub secret set <key> <value>")
 		}
-		if err := st.Set(args[1], args[2]); err != nil {
+		if err := sett.Set(args[1], args[2]); err != nil {
 			return fmt.Errorf("setting %q: %w", args[1], err)
 		}
 		fmt.Printf("Secret %q saved.\n", args[1])
@@ -415,9 +428,9 @@ func cmdSecret(args []string) error {
 		if len(args) != 2 {
 			return fmt.Errorf("usage: agenthub secret get <key>")
 		}
-		val, err := st.Get(args[1])
-		if err != nil {
-			return fmt.Errorf("getting %q: %w", args[1], err)
+		val := sett.Get(args[1])
+		if val == "" {
+			return fmt.Errorf("%q is not set", args[1])
 		}
 		fmt.Println(val)
 
@@ -427,8 +440,7 @@ func cmdSecret(args []string) error {
 			"registration_token", "admin_password_hash", "session_secret",
 		}
 		for _, key := range knownKeys {
-			val, _ := st.Get(key)
-			if val != "" {
+			if sett.Get(key) != "" {
 				fmt.Printf("%-24s (set)\n", key)
 			} else {
 				fmt.Printf("%-24s (not set)\n", key)
@@ -810,26 +822,62 @@ func (r *slackReplier) PostMessage(_ context.Context, channel, text string) erro
 	return err
 }
 
-// ── storeBackedChatter: reads the API key from the store on every call ────────
+// ── reactiveChatter: rebuilds openai.Client only when settings change ─────────
 //
-// This means 'agenthub secret set openai_api_key <key>' takes effect immediately
-// without a service restart.
+// newReactiveChatter registers Watch callbacks on the settings keys it cares
+// about. The openai.Client is cached and only rebuilt when one of those keys
+// changes — not on every Respond call. This gives O(1) hot-path reads with
+// immediate propagation of setting changes (no restart required).
 
-type storeBackedChatter struct {
-	store secretGetter
-	cfg   config.OpenAIConfig
+type reactiveChatter struct {
+	mu     sync.RWMutex
+	sett   *settings.Store
+	client *openai.Client // nil when key is unset
 }
 
-// secretGetter is the subset of store.Store used here (makes it testable).
-type secretGetter interface {
-	Get(key string) (string, error)
+func newReactiveChatter(s *settings.Store) *reactiveChatter {
+	c := &reactiveChatter{sett: s}
+	c.rebuild()
+	rebuild := func(_ string) { c.rebuild() }
+	s.Watch("openai_api_key", rebuild)
+	s.Watch("openai.base_url", rebuild)
+	s.Watch("openai.model", rebuild)
+	s.Watch("openai.system_prompt", rebuild)
+	return c
 }
 
-func (c *storeBackedChatter) Respond(ctx context.Context, msg, _ string) (string, error) {
-	key, _ := c.store.Get("openai_api_key")
-	if key == "" {
+func (c *reactiveChatter) rebuild() {
+	key := c.sett.Get("openai_api_key")
+	var client *openai.Client
+	if key != "" {
+		maxTokens := cfg2int(c.sett.Get("openai.max_tokens_str"), 1024)
+		client = openai.NewClient(
+			key,
+			c.sett.Get("openai.model"),
+			maxTokens,
+			c.sett.Get("openai.system_prompt"),
+			c.sett.Get("openai.base_url"),
+		)
+	}
+	c.mu.Lock()
+	c.client = client
+	c.mu.Unlock()
+}
+
+func (c *reactiveChatter) Respond(ctx context.Context, msg, _ string) (string, error) {
+	c.mu.RLock()
+	client := c.client
+	c.mu.RUnlock()
+	if client == nil {
 		return "", nil
 	}
-	client := openai.NewClient(key, c.cfg.Model, c.cfg.MaxTokens, c.cfg.SystemPrompt, c.cfg.BaseURL)
 	return client.Chat(ctx, []openai.Message{{Role: "user", Content: msg}})
+}
+
+func cfg2int(s string, def int) int {
+	var n int
+	if _, err := fmt.Sscanf(s, "%d", &n); err == nil && n > 0 {
+		return n
+	}
+	return def
 }
