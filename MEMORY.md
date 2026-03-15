@@ -42,7 +42,9 @@ AI agent sessions that span multiple commits get a narrative section below the l
 
 | `36d7aaf` | Claude Sonnet 4.6 | 2026-03-14 | Fix agent task-assignment loop: enqueue inbox message on kanban assign + block bot DM feedback loop that was creating 40+ chained tasks. |
 | `2a7a73a` | Claude Sonnet 4.6 | 2026-03-14 | Bot Father: name uniqueness enforcement with suggestions, simtech-sandbox registration announcements, @botname DM routing. Cleared 8800+ junk beads. |
-| `(pending)` | Claude Sonnet 4.6 | 2026-03-14 | Fix Slack message handler: only process DMs (channel 'D*'), not public channel messages; fix noopAIChatter to not leak config errors to users. |
+| `36d7aaf` | Claude Sonnet 4.6 | 2026-03-14 | Fix Slack message handler: only process DMs (channel 'D*'), not public channel messages; fix noopAIChatter to not leak config errors to users. |
+| `9564679` | Claude Sonnet 4.6 | 2026-03-15 | Add make release + native Go agent loop (client_run.go): heartbeat, inbox poll, LLM call, reply/ack — replaces bash loop.sh + openclaw dependency entirely. |
+| `c04c532` | Claude Sonnet 4.6 | 2026-03-15 | Bump VERSION to 0.1.1 and publish GitHub release v0.1.1 with Linux amd64 binary built via GitHub Actions. |
 
 ---
 
