@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -14,7 +13,6 @@ import (
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/auth"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/dolt"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/kanban"
-	"github.com/NVIDIA-DevPlat/agenthub/src/internal/store"
 	"github.com/stretchr/testify/require"
 )
 
@@ -97,11 +95,32 @@ func testTemplates(t *testing.T) map[string]*template.Template {
 	return out
 }
 
-func testServer(t *testing.T) (*Server, *auth.Manager, *store.Store) {
+// memSecretStore is a simple in-memory SecretStore for tests.
+type memSecretStore struct {
+	data map[string]string
+}
+
+func newMemSecretStore() *memSecretStore {
+	return &memSecretStore{data: make(map[string]string)}
+}
+
+func (m *memSecretStore) Get(key string) string { return m.data[key] }
+func (m *memSecretStore) Set(key, value string) error { m.data[key] = value; return nil }
+func (m *memSecretStore) SetResourceCredential(rID, key, value string) error {
+	m.data["resource:"+rID+":"+key] = value; return nil
+}
+func (m *memSecretStore) GetResourceCredential(rID, key string) string {
+	return m.data["resource:"+rID+":"+key]
+}
+func (m *memSecretStore) DeleteResourceCredentials(rID string) {
+	for _, k := range []string{"token", "refresh_token", "secret", "password", "api_key"} {
+		delete(m.data, "resource:"+rID+":"+k)
+	}
+}
+
+func testServer(t *testing.T) (*Server, *auth.Manager, *memSecretStore) {
 	t.Helper()
-	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, "test.enc"), "testpassword")
-	require.NoError(t, err)
+	st := newMemSecretStore()
 
 	hash, err := auth.HashPassword("adminpassword")
 	require.NoError(t, err)
@@ -249,8 +268,7 @@ func TestSecretsSubmitSavesKey(t *testing.T) {
 	require.Contains(t, w.Body.String(), "Secrets saved")
 
 	// Verify it was persisted.
-	v, err := st.Get("openai_api_key")
-	require.NoError(t, err)
+	v := st.Get("openai_api_key")
 	require.Equal(t, "sk-test-key-123", v)
 }
 

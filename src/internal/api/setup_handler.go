@@ -4,9 +4,6 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net/http"
-
-	"github.com/NVIDIA-DevPlat/agenthub/src/internal/auth"
-	"github.com/NVIDIA-DevPlat/agenthub/src/internal/store"
 )
 
 func (s *Server) handleSetupGet(w http.ResponseWriter, r *http.Request) {
@@ -39,55 +36,15 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Open (create) the store with the chosen password.
-	st, err := store.Open(s.storePath, password)
-	if err != nil {
-		s.render(w, "setup.html", pageData{Title: "Setup", Error: "Failed to create secrets store: " + err.Error()})
+	if s.setupFn == nil {
+		s.render(w, "setup.html", pageData{Title: "Setup", Error: "Setup not configured."})
 		return
 	}
 
-	// Hash the admin password.
-	hash, err := auth.HashPassword(password)
+	regToken, err := s.setupFn(password)
 	if err != nil {
-		s.render(w, "setup.html", pageData{Title: "Setup", Error: "Failed to hash password."})
+		s.render(w, "setup.html", pageData{Title: "Setup", Error: "Setup failed: " + err.Error()})
 		return
-	}
-	if err := st.Set("admin_password_hash", hash); err != nil {
-		s.render(w, "setup.html", pageData{Title: "Setup", Error: "Failed to save password hash."})
-		return
-	}
-
-	// Generate a random session secret.
-	sessionSecret, err := generateRandHex(32)
-	if err != nil {
-		s.render(w, "setup.html", pageData{Title: "Setup", Error: "Failed to generate session secret."})
-		return
-	}
-	if err := st.Set("session_secret", sessionSecret); err != nil {
-		s.render(w, "setup.html", pageData{Title: "Setup", Error: "Failed to save session secret."})
-		return
-	}
-
-	// Generate a registration token for bot auto-registration.
-	regToken, err := generateRandHex(16)
-	if err != nil {
-		s.render(w, "setup.html", pageData{Title: "Setup", Error: "Failed to generate registration token."})
-		return
-	}
-	if err := st.Set("registration_token", regToken); err != nil {
-		s.render(w, "setup.html", pageData{Title: "Setup", Error: "Failed to save registration token."})
-		return
-	}
-
-	// Optionally save tokens if provided.
-	for _, kv := range []struct{ form, key string }{
-		{"openai_api_key", "openai_api_key"},
-		{"slack_bot_token", "slack_bot_token"},
-		{"slack_app_token", "slack_app_token"},
-	} {
-		if v := r.FormValue(kv.form); v != "" {
-			_ = st.Set(kv.key, v)
-		}
 	}
 
 	s.render(w, "setup.html", pageData{

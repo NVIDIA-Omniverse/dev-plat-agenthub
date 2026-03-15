@@ -55,7 +55,8 @@ func (s *Server) authenticateAPIUser(r *http.Request) (string, bool) {
 	if len(bearer) > 7 && bearer[:7] == "Bearer " {
 		token := bearer[7:]
 		if s.store != nil {
-			if stored, err := s.store.Get("registration_token"); err == nil && token == stored {
+			stored := s.store.Get("registration_token")
+			if stored != "" && token == stored {
 				return "admin-bootstrap-user", true
 			}
 		}

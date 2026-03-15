@@ -107,12 +107,30 @@ func cmdServe(_ []string) error {
 		return fmt.Errorf("loading templates: %w", err)
 	}
 
-	// Detect first-run: if the store file doesn't exist, start in setup mode.
-	if _, statErr := os.Stat(cfg.Store.Path); os.IsNotExist(statErr) {
-		return cmdServeSetupMode(cfg, tmpl)
+	// Open Dolt and run migrations first (no password needed for Dolt itself).
+	db, err := openDB(cfg.Dolt.DSN)
+	if err != nil {
+		return fmt.Errorf("opening dolt: %w", err)
+	}
+	defer db.Close()
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	if err := db.Migrate(ctx); err != nil {
+		return fmt.Errorf("running migrations: %w", err)
 	}
 
-	// Unlock the encrypted store. AGENTHUB_ADMIN_PASSWORD env var takes
+	// Check if this is a first-run (settings not yet initialised).
+	initialised, err := dolt.IsInitialised(db)
+	if err != nil {
+		return fmt.Errorf("checking initialisation: %w", err)
+	}
+	if !initialised {
+		return cmdServeSetupMode(cfg, db, tmpl)
+	}
+
+	// Unlock the encrypted settings. AGENTHUB_ADMIN_PASSWORD env var takes
 	// precedence (for systemd/CI); falls back to interactive prompt.
 	var password string
 	if pw := os.Getenv("AGENTHUB_ADMIN_PASSWORD"); pw != "" {
@@ -125,16 +143,25 @@ func cmdServe(_ []string) error {
 		}
 	}
 
-	st, err := store.Open(cfg.Store.Path, password)
+	p, err := dolt.OpenDoltPersister(db, password)
 	if err != nil {
-		return fmt.Errorf("opening secrets store: %w", err)
+		return fmt.Errorf("opening settings: %w", err)
+	}
+
+	// Auto-migrate from old file store if it exists and settings are sparse.
+	if cfg.Store.Path != "" {
+		if st, openErr := store.Open(cfg.Store.Path, password); openErr == nil {
+			if migrateErr := p.MigrateFrom(st); migrateErr != nil {
+				slog.Warn("auto-migration from file store incomplete", "error", migrateErr)
+			}
+		}
 	}
 
 	// settings.Store is the single source of truth for all runtime configuration.
 	// It loads persisted values from the encrypted store, then seeds any YAML
 	// defaults for keys not yet set. All components read from it (O(1) memory);
 	// writes go through it so in-memory state + persistence update atomically.
-	sett := settings.New(st)
+	sett := settings.New(p)
 	sett.Seed("openai.base_url", cfg.OpenAI.BaseURL)
 	sett.Seed("openai.model", cfg.OpenAI.Model)
 	sett.Seed("openai.max_tokens_str", fmt.Sprintf("%d", cfg.OpenAI.MaxTokens))
@@ -151,19 +178,6 @@ func cmdServe(_ []string) error {
 	}
 
 	authMgr := auth.NewManager([]byte(sessionSecret), []byte(adminHash), cfg.Server.SessionCookieName)
-
-	db, err := openDB(cfg.Dolt.DSN)
-	if err != nil {
-		return fmt.Errorf("opening dolt: %w", err)
-	}
-	defer db.Close()
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	if err := db.Migrate(ctx); err != nil {
-		return fmt.Errorf("running migrations: %w", err)
-	}
 
 	// Wire kanban to beads if configured, otherwise fall back to empty board.
 	var kb api.KanbanBuilder
@@ -201,7 +215,7 @@ func cmdServe(_ []string) error {
 		opts = append(opts, api.WithTaskManager(btm), api.WithTaskLogger(btm))
 	}
 
-	srv := api.NewServer(authMgr, db, kb, st, tmpl, opts...)
+	srv := api.NewServer(authMgr, db, kb, sett, tmpl, opts...)
 
 	// Serve static files.
 	staticSub, err := fs.Sub(agenthub.Static, "web/static")
@@ -273,10 +287,39 @@ func cmdServe(_ []string) error {
 	return nil
 }
 
-// cmdServeSetupMode starts the server in first-run setup mode (no store, no dolt).
-func cmdServeSetupMode(cfg config.Config, tmpl map[string]*template.Template) error {
+// cmdServeSetupMode starts the server in first-run setup mode.
+func cmdServeSetupMode(cfg config.Config, db *dolt.DB, tmpl map[string]*template.Template) error {
 	// Placeholder auth — login always fails in setup mode (setup page is public).
 	authMgr := auth.NewManager([]byte("setup-placeholder-32-bytes-pad!!"), nil, cfg.Server.SessionCookieName)
+
+	setupFn := func(password string) (string, error) {
+		p, err := dolt.OpenDoltPersister(db, password)
+		if err != nil {
+			return "", fmt.Errorf("initialising settings: %w", err)
+		}
+		hash, err := auth.HashPassword(password)
+		if err != nil {
+			return "", err
+		}
+		if err := p.Set("admin_password_hash", hash); err != nil {
+			return "", err
+		}
+		secret, err := generateSecret(32)
+		if err != nil {
+			return "", err
+		}
+		if err := p.Set("session_secret", secret); err != nil {
+			return "", err
+		}
+		regToken, err := generateSecret(16)
+		if err != nil {
+			return "", err
+		}
+		if err := p.Set("registration_token", regToken); err != nil {
+			return "", err
+		}
+		return regToken, nil
+	}
 
 	srv := api.NewServer(
 		authMgr,
@@ -284,7 +327,7 @@ func cmdServeSetupMode(cfg config.Config, tmpl map[string]*template.Template) er
 		&simpleKanbanBuilder{cfg: cfg.Kanban},
 		nil,
 		tmpl,
-		api.WithSetupMode(cfg.Store.Path),
+		api.WithSetupMode(setupFn),
 	)
 
 	staticSub, err := fs.Sub(agenthub.Static, "web/static")
@@ -348,16 +391,27 @@ func cmdSetup(_ []string) error {
 		return fmt.Errorf("passwords do not match")
 	}
 
-	st, err := store.Open(cfg.Store.Path, password)
+	db, err := openDB(cfg.Dolt.DSN)
 	if err != nil {
-		return fmt.Errorf("creating store: %w", err)
+		return fmt.Errorf("opening dolt: %w", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	if err := db.Migrate(ctx); err != nil {
+		return fmt.Errorf("running migrations: %w", err)
+	}
+
+	p, err := dolt.OpenDoltPersister(db, password)
+	if err != nil {
+		return fmt.Errorf("initialising settings: %w", err)
 	}
 
 	hash, err := auth.HashPassword(password)
 	if err != nil {
 		return err
 	}
-	if err := st.Set("admin_password_hash", hash); err != nil {
+	if err := p.Set("admin_password_hash", hash); err != nil {
 		return err
 	}
 
@@ -366,7 +420,7 @@ func cmdSetup(_ []string) error {
 	if err != nil {
 		return err
 	}
-	if err := st.Set("session_secret", secret); err != nil {
+	if err := p.Set("session_secret", secret); err != nil {
 		return err
 	}
 
@@ -375,7 +429,7 @@ func cmdSetup(_ []string) error {
 	if err != nil {
 		return err
 	}
-	if err := st.Set("registration_token", regToken); err != nil {
+	if err := p.Set("registration_token", regToken); err != nil {
 		return err
 	}
 
@@ -384,7 +438,7 @@ func cmdSetup(_ []string) error {
 }
 
 // cmdSecret implements "agenthub secret set|get|list [key] [value]".
-// It opens the encrypted store with the admin password and reads or writes secrets
+// It opens the Dolt-backed settings with the admin password and reads or writes secrets
 // without requiring the full server to be running.
 func cmdSecret(args []string) error {
 	if len(args) == 0 {
@@ -408,11 +462,22 @@ func cmdSecret(args []string) error {
 		}
 	}
 
-	st, err := store.Open(cfg.Store.Path, password)
+	db, err := openDB(cfg.Dolt.DSN)
 	if err != nil {
-		return fmt.Errorf("opening secrets store: %w", err)
+		return fmt.Errorf("opening dolt: %w", err)
 	}
-	sett := settings.New(st)
+	defer db.Close()
+
+	ctx := context.Background()
+	if err := db.Migrate(ctx); err != nil {
+		return fmt.Errorf("running migrations: %w", err)
+	}
+
+	p, err := dolt.OpenDoltPersister(db, password)
+	if err != nil {
+		return fmt.Errorf("opening settings: %w", err)
+	}
+	sett := settings.New(p)
 
 	switch args[0] {
 	case "set":

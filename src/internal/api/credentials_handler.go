@@ -128,7 +128,7 @@ func (s *Server) handleGetCredentials(w http.ResponseWriter, r *http.Request) {
 		creds := map[string]string{}
 		if s.store != nil {
 			for _, key := range []string{"token", "refresh_token", "secret", "password", "api_key"} {
-				if v, err := s.store.GetResourceCredential(res.ID, key); err == nil && v != "" {
+				if v := s.store.GetResourceCredential(res.ID, key); v != "" {
 					creds[key] = v
 				}
 			}

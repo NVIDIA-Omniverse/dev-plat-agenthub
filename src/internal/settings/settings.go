@@ -21,6 +21,7 @@
 package settings
 
 import (
+	"fmt"
 	"sync"
 )
 
@@ -130,4 +131,22 @@ func (s *Store) Keys() []string {
 	}
 	s.mu.RUnlock()
 	return keys
+}
+
+// SetResourceCredential stores a credential for a resource.
+// The full key is "resource:<resourceID>:<key>".
+func (s *Store) SetResourceCredential(resourceID, key, value string) error {
+	return s.Set(fmt.Sprintf("resource:%s:%s", resourceID, key), value)
+}
+
+// GetResourceCredential retrieves a credential for a resource. Returns "" if not set.
+func (s *Store) GetResourceCredential(resourceID, key string) string {
+	return s.Get(fmt.Sprintf("resource:%s:%s", resourceID, key))
+}
+
+// DeleteResourceCredentials removes common credential keys for a resource.
+func (s *Store) DeleteResourceCredentials(resourceID string) {
+	for _, k := range []string{"token", "refresh_token", "secret", "password", "api_key"} {
+		_ = s.Delete(fmt.Sprintf("resource:%s:%s", resourceID, k))
+	}
 }

@@ -280,6 +280,15 @@ var migrations = []migration{
 			KEY idx_bot_name_acked (bot_name, acked_at)
 		)`,
 	},
+	{
+		Name: "012_create_settings",
+		SQL: `CREATE TABLE IF NOT EXISTS settings (
+			key_name   VARCHAR(255) NOT NULL,
+			value      TEXT         NOT NULL DEFAULT '',
+			updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (key_name)
+		)`,
+	},
 }
 
 // Instance represents a registered openclaw bot.

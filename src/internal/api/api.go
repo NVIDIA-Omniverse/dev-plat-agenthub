@@ -10,6 +10,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -21,7 +22,6 @@ import (
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/auth"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/dolt"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/kanban"
-	"github.com/NVIDIA-DevPlat/agenthub/src/internal/store"
 )
 
 // --------------------------------------------------------------------------
@@ -83,6 +83,16 @@ type CapacityReader interface {
 // KanbanBuilder builds the kanban board.
 type KanbanBuilder interface {
 	Build(ctx context.Context) (*kanban.Board, error)
+}
+
+// SecretStore provides reactive, write-through configuration storage.
+// settings.Store satisfies this interface.
+type SecretStore interface {
+	Get(key string) string
+	Set(key, value string) error
+	SetResourceCredential(resourceID, key, value string) error
+	GetResourceCredential(resourceID, key string) string
+	DeleteResourceCredentials(resourceID string)
 }
 
 // TaskRecord is the full representation of an issue returned by TaskManager.
@@ -164,11 +174,11 @@ type Server struct {
 	replier        InboxReplier    // optional; POST /api/inbox/{id}/reply posts to Slack if set
 	kanban         KanbanBuilder
 	kanbanColumns  []string        // ordered column names, used by task-create form
-	store          *store.Store
+	store          SecretStore
 	tmpl           map[string]*template.Template
 	mux            *http.ServeMux
-	setupMode      bool   // when true, /admin/* routes redirect to /admin/setup
-	storePath      string // needed by setup handler when setupMode is true
+	setupMode      bool                          // when true, /admin/* routes redirect to /admin/setup
+	setupFn        func(string) (string, error)  // called with password on POST /admin/setup; returns regToken
 
 	// Public URL used for Slack messages and credential URLs.
 	publicURL string
@@ -217,12 +227,12 @@ func WithKanbanColumns(cols []string) ServerOption {
 func WithReplier(ir InboxReplier) ServerOption { return func(s *Server) { s.replier = ir } }
 
 // WithSetupMode puts the server into first-run setup mode.
-// In this mode all /admin/* requests (except /admin/setup and /admin/login)
-// redirect to /admin/setup. storePath is the path where the store will be created.
-func WithSetupMode(storePath string) ServerOption {
+// setupFn is called with the chosen password when the setup form is submitted.
+// It should persist initial settings and return the registration token on success.
+func WithSetupMode(setupFn func(password string) (regToken string, err error)) ServerOption {
 	return func(s *Server) {
 		s.setupMode = true
-		s.storePath = storePath
+		s.setupFn = setupFn
 	}
 }
 
@@ -255,7 +265,7 @@ func NewServer(
 	authMgr *auth.Manager,
 	db BotLister,
 	kb KanbanBuilder,
-	st *store.Store,
+	st SecretStore,
 	tmpl map[string]*template.Template,
 	opts ...ServerOption,
 ) *Server {
@@ -349,6 +359,8 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /admin/kanban/tasks/{id}/assign", protected(http.HandlerFunc(s.handleKanbanTaskAssign)))
 	s.mux.Handle("GET /admin/secrets", protected(http.HandlerFunc(s.handleSecretsPage)))
 	s.mux.Handle("POST /admin/secrets", protected(http.HandlerFunc(s.handleSecretsSubmit)))
+	s.mux.Handle("PUT /api/settings/{key}", protected(http.HandlerFunc(s.handlePutSetting)))
+	s.mux.Handle("GET /api/settings", protected(http.HandlerFunc(s.handleGetSettings)))
 	s.mux.Handle("GET /admin/events", protected(http.HandlerFunc(s.handleAdminEvents)))
 	s.mux.Handle("GET /admin/heartbeats", protected(http.HandlerFunc(s.handleAdminHeartbeats)))
 	// Resources admin UI.
@@ -395,11 +407,8 @@ func (s *Server) validateRegistrationToken(r *http.Request) bool {
 	if token == "" {
 		return false
 	}
-	stored, err := s.store.Get("registration_token")
-	if err != nil {
-		return false
-	}
-	return token == stored
+	stored := s.store.Get("registration_token")
+	return stored != "" && token == stored
 }
 
 // --------------------------------------------------------------------------
@@ -894,4 +903,75 @@ func (s *Server) handleSecretsSubmit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.render(w, "secrets.html", pageData{Title: "Secrets", Success: "Secrets saved."})
+}
+
+// handlePutSetting handles PUT /api/settings/{key}.
+// Admin-authenticated. Writes the value through the reactive settings store,
+// notifying any registered watchers (e.g. rebuilds the OpenAI client on key change).
+func (s *Server) handlePutSetting(w http.ResponseWriter, r *http.Request) {
+	if !s.auth.IsAuthenticated(r) {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	if s.store == nil {
+		http.Error(w, `{"error":"settings store not configured"}`, http.StatusServiceUnavailable)
+		return
+	}
+	key := r.PathValue("key")
+	if key == "" {
+		http.Error(w, `{"error":"key is required"}`, http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+	if err := s.store.Set(key, body.Value); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"ok":true}`))
+}
+
+// handleGetSettings handles GET /api/settings.
+// Admin-authenticated. Returns all setting keys (values masked for sensitive keys).
+func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	if !s.auth.IsAuthenticated(r) {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	if s.store == nil {
+		http.Error(w, `{"error":"settings store not configured"}`, http.StatusServiceUnavailable)
+		return
+	}
+	// We can't list keys via the SecretStore interface — return a fixed list of known keys.
+	sensitiveKeys := map[string]bool{
+		"openai_api_key": true, "slack_bot_token": true, "slack_app_token": true,
+		"admin_password_hash": true, "session_secret": true,
+	}
+	knownKeys := []string{
+		"openai_api_key", "openai.model", "openai.base_url", "openai.max_tokens_str",
+		"openai.system_prompt", "slack_bot_token", "slack_app_token",
+		"registration_token", "admin_password_hash", "session_secret",
+	}
+	type kv struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+		Set   bool   `json:"set"`
+	}
+	var result []kv
+	for _, k := range knownKeys {
+		v := s.store.Get(k)
+		display := v
+		if sensitiveKeys[k] && v != "" {
+			display = "***"
+		}
+		result = append(result, kv{Key: k, Value: display, Set: v != ""})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
 }

@@ -4,18 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/dolt"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/kanban"
-	"github.com/NVIDIA-DevPlat/agenthub/src/internal/store"
 	"github.com/stretchr/testify/require"
 )
 
@@ -213,18 +211,18 @@ func TestHandleKanbanWithColumns(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
+type failingSecretStore struct {
+	*memSecretStore
+}
+
+func (f *failingSecretStore) Set(_, _ string) error { return fmt.Errorf("disk full") }
+
 func TestSecretsSubmitStoreError(t *testing.T) {
 	srv, _, _ := testServer(t)
 	cookie := loginTo(t, srv)
 
-	dir := t.TempDir()
-	storePath := filepath.Join(dir, "readonly_subdir", "store.enc")
-	newStore, err := store.Open(storePath, "testpassword")
-	require.NoError(t, err)
-
-	require.NoError(t, os.Chmod(dir, 0500))
-	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
-	srv.store = newStore
+	// Replace the store with one that fails on Set.
+	srv.store = &failingSecretStore{newMemSecretStore()}
 
 	form := url.Values{"openai_api_key": {"sk-test-key"}}
 	r := httptest.NewRequest(http.MethodPost, "/admin/secrets", strings.NewReader(form.Encode()))
@@ -324,7 +322,7 @@ func TestHandleBotCheckWithCheckerError(t *testing.T) {
 // --------------------------------------------------------------------------
 
 func TestSetupModeRedirectsAdmin(t *testing.T) {
-	srv := testServerWithOptions(t, WithSetupMode(t.TempDir()+"/store.enc"))
+	srv := testServerWithOptions(t, WithSetupMode(func(pw string) (string, error) { return "testtoken", nil }))
 
 	r := httptest.NewRequest(http.MethodGet, "/admin/", nil)
 	w := httptest.NewRecorder()
@@ -334,7 +332,7 @@ func TestSetupModeRedirectsAdmin(t *testing.T) {
 }
 
 func TestSetupModeAllowsSetupRoute(t *testing.T) {
-	srv := testServerWithOptions(t, WithSetupMode(t.TempDir()+"/store.enc"))
+	srv := testServerWithOptions(t, WithSetupMode(func(pw string) (string, error) { return "testtoken", nil }))
 
 	r := httptest.NewRequest(http.MethodGet, "/admin/setup", nil)
 	w := httptest.NewRecorder()
@@ -344,7 +342,7 @@ func TestSetupModeAllowsSetupRoute(t *testing.T) {
 }
 
 func TestSetupModeAllowsLogin(t *testing.T) {
-	srv := testServerWithOptions(t, WithSetupMode(t.TempDir()+"/store.enc"))
+	srv := testServerWithOptions(t, WithSetupMode(func(pw string) (string, error) { return "testtoken", nil }))
 
 	r := httptest.NewRequest(http.MethodGet, "/admin/login", nil)
 	w := httptest.NewRecorder()
@@ -364,8 +362,7 @@ func TestHandleSetupGetNotSetupMode(t *testing.T) {
 }
 
 func TestHandleSetupPostPasswordMismatch(t *testing.T) {
-	dir := t.TempDir()
-	srv := testServerWithOptions(t, WithSetupMode(dir+"/store.enc"))
+	srv := testServerWithOptions(t, WithSetupMode(func(pw string) (string, error) { return "testtoken", nil }))
 
 	form := url.Values{"password": {"abc"}, "confirm_password": {"xyz"}}
 	r := httptest.NewRequest(http.MethodPost, "/admin/setup", strings.NewReader(form.Encode()))
@@ -377,8 +374,7 @@ func TestHandleSetupPostPasswordMismatch(t *testing.T) {
 }
 
 func TestHandleSetupPostEmptyPassword(t *testing.T) {
-	dir := t.TempDir()
-	srv := testServerWithOptions(t, WithSetupMode(dir+"/store.enc"))
+	srv := testServerWithOptions(t, WithSetupMode(func(pw string) (string, error) { return "testtoken", nil }))
 
 	form := url.Values{"password": {""}, "confirm_password": {""}}
 	r := httptest.NewRequest(http.MethodPost, "/admin/setup", strings.NewReader(form.Encode()))
@@ -390,8 +386,7 @@ func TestHandleSetupPostEmptyPassword(t *testing.T) {
 }
 
 func TestHandleSetupPostSuccess(t *testing.T) {
-	dir := t.TempDir()
-	srv := testServerWithOptions(t, WithSetupMode(dir+"/store.enc"))
+	srv := testServerWithOptions(t, WithSetupMode(func(pw string) (string, error) { return "testtoken", nil }))
 
 	form := url.Values{"password": {"securepass"}, "confirm_password": {"securepass"}}
 	r := httptest.NewRequest(http.MethodPost, "/admin/setup", strings.NewReader(form.Encode()))
@@ -902,15 +897,16 @@ func TestHandleBotTaskCreateError(t *testing.T) {
 // --------------------------------------------------------------------------
 
 func TestHandleSetupPostBadStorePath(t *testing.T) {
-	// /nonexistent/... cannot be created → store.Open fails.
-	srv := testServerWithOptions(t, WithSetupMode("/nonexistent/deep/path/store.enc"))
+	// setupFn returns an error → setup page shows the error.
+	srv := testServerWithOptions(t, WithSetupMode(func(pw string) (string, error) {
+		return "", fmt.Errorf("cannot write to path")
+	}))
 
 	form := url.Values{"password": {"goodpass"}, "confirm_password": {"goodpass"}}
 	r := httptest.NewRequest(http.MethodPost, "/admin/setup", strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, r)
-	// Should fail when saving (store.Open succeeds in-memory but Set triggers write).
-	// We just verify a response is returned — may be success or error depending on OS.
 	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), "cannot write to path")
 }

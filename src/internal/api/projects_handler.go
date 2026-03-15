@@ -90,8 +90,8 @@ func (s *Server) createSlackChannel(ctx context.Context, name string) (string, e
 	if s.store == nil {
 		return "", fmt.Errorf("store not configured")
 	}
-	token, err := s.store.Get("slack_bot_token")
-	if err != nil || token == "" {
+	token := s.store.Get("slack_bot_token")
+	if token == "" {
 		return "", fmt.Errorf("slack_bot_token not configured")
 	}
 	slug := slugify(name)
@@ -168,8 +168,8 @@ func (s *Server) postSlackMessage(ctx context.Context, channelID, text string) {
 	if s.store == nil {
 		return
 	}
-	token, err := s.store.Get("slack_bot_token")
-	if err != nil || token == "" {
+	token := s.store.Get("slack_bot_token")
+	if token == "" {
 		return
 	}
 	type slackMsg struct {
