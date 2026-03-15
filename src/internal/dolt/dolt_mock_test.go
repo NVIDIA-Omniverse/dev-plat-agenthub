@@ -255,6 +255,25 @@ func TestListAllInstancesScanError(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestScanInstanceTimestampBytes verifies that scanInstance fails with a clear
+// error when timestamp columns are returned as raw bytes ([]uint8), which is
+// what the MySQL driver does when parseTime=true is NOT set on the DSN.
+// This test documents the regression fixed by setting cfg.ParseTime = true in Open().
+func TestScanInstanceTimestampBytes(t *testing.T) {
+	doltDB, mock := newMockDB(t)
+	// Simulate MySQL driver returning TIMESTAMP as []uint8 (parseTime=false behavior).
+	rows := sqlmock.NewRows(instanceCols).AddRow(
+		"id1", "bot1", "1.2.3.4", 8080, "U1", "C1",
+		0, nil, 1,
+		[]byte("2026-03-14 22:39:28"), // created_at as raw bytes
+		[]byte("2026-03-14 22:39:28"), // updated_at as raw bytes
+	)
+	mock.ExpectQuery("SELECT").WillReturnRows(rows)
+	_, err := doltDB.ListAllInstances(context.Background())
+	require.Error(t, err, "scan should fail when timestamps are returned as []uint8")
+	require.Contains(t, err.Error(), "scanning instance")
+}
+
 func TestDeleteInstanceByNameSuccess(t *testing.T) {
 	doltDB, mock := newMockDB(t)
 	mock.ExpectExec("DELETE FROM openclaw_instances").WillReturnResult(sqlmock.NewResult(0, 1))

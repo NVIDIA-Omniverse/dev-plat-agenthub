@@ -19,6 +19,20 @@
    same commit (update MEMORY.md, stage it, then commit everything together).
    The log is append-only; never edit past entries.
 
+## Commandment 7 — Test Escapes Must Become Tests
+
+7. **When a bug reaches production that tests did not catch, add a test that would have caught it before fixing it.**
+   The test must fail on the broken code and pass on the fix.
+   Document what the production symptom was in the test comment.
+
+   *Example escape (2026-03-14):* `scanInstance` returned
+   `"unsupported Scan, storing driver.Value type []uint8 into type *time.Time"` in
+   production because the MySQL DSN lacked `parseTime=true`. The mock tests used
+   `time.Time` values directly and never exercised the `[]uint8` code path. Fix:
+   `TestScanInstanceTimestampBytes` now passes `[]byte` for timestamp columns to
+   confirm the scan fails loudly, and `Open()` sets `cfg.ParseTime = true`
+   so production never sees `[]uint8` again.
+
 ## Commandment 6 — Always Check Pending Work Before Starting
 
 6. **Before writing any code or starting any task, check for open work:**
