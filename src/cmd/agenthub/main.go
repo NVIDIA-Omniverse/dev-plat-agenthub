@@ -212,15 +212,7 @@ func cmdServe(_ []string) error {
 	slackAppToken, _ := st.Get("slack_app_token")
 	if slackBotToken != "" && slackAppToken != "" {
 		regToken, _ := st.Get("registration_token")
-		openaiKey, _ := st.Get("openai_api_key")
-		var aiChat islack.AIChatter
-		if openaiKey != "" {
-			aiChat = &openaiChatter{
-				client: openai.NewClient(openaiKey, cfg.OpenAI.Model, cfg.OpenAI.MaxTokens, cfg.OpenAI.SystemPrompt, cfg.OpenAI.BaseURL),
-			}
-		} else {
-			aiChat = &noopAIChatter{}
-		}
+		aiChat := &storeBackedChatter{store: st, cfg: cfg.OpenAI}
 		prober := &openclawProber{cfg: cfg.Openclaw, timeout: cfg.Openclaw.LivenessTimeout}
 
 		// Wire the replier so agents can post Slack replies via POST /api/inbox/{id}/reply.
@@ -818,17 +810,26 @@ func (r *slackReplier) PostMessage(_ context.Context, channel, text string) erro
 	return err
 }
 
-// ── openaiChatter: adapts openai.Client to slack.AIChatter ───────────────────
+// ── storeBackedChatter: reads the API key from the store on every call ────────
+//
+// This means 'agenthub secret set openai_api_key <key>' takes effect immediately
+// without a service restart.
 
-type openaiChatter struct{ client *openai.Client }
-
-func (c *openaiChatter) Respond(ctx context.Context, msg, _ string) (string, error) {
-	return c.client.Chat(ctx, []openai.Message{{Role: "user", Content: msg}})
+type storeBackedChatter struct {
+	store secretGetter
+	cfg   config.OpenAIConfig
 }
 
-// noopAIChatter is used when no OpenAI key is configured.
-type noopAIChatter struct{}
+// secretGetter is the subset of store.Store used here (makes it testable).
+type secretGetter interface {
+	Get(key string) (string, error)
+}
 
-func (n *noopAIChatter) Respond(_ context.Context, _ string, _ string) (string, error) {
-	return "", nil // filtered by isConfigError guard in handler; DM reply uses fallback
+func (c *storeBackedChatter) Respond(ctx context.Context, msg, _ string) (string, error) {
+	key, _ := c.store.Get("openai_api_key")
+	if key == "" {
+		return "", nil
+	}
+	client := openai.NewClient(key, c.cfg.Model, c.cfg.MaxTokens, c.cfg.SystemPrompt, c.cfg.BaseURL)
+	return client.Chat(ctx, []openai.Message{{Role: "user", Content: msg}})
 }

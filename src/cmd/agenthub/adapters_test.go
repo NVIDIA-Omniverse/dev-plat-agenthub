@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
@@ -17,7 +16,6 @@ import (
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/beads"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/config"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/dolt"
-	"github.com/NVIDIA-DevPlat/agenthub/src/internal/openai"
 	"github.com/stretchr/testify/require"
 )
 
@@ -375,56 +373,77 @@ func TestSlackTaskManagerCreateError(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
-// noopAIChatter / openaiChatter tests
+// storeBackedChatter tests
 // --------------------------------------------------------------------------
 
-func TestNoopAIChatterRespond(t *testing.T) {
-	n := &noopAIChatter{}
-	resp, err := n.Respond(context.Background(), "hello", "ch1")
+// mockSecretStore implements secretGetter for tests.
+type mockSecretStore struct{ secrets map[string]string }
+
+func (m *mockSecretStore) Get(key string) (string, error) { return m.secrets[key], nil }
+
+func TestStoreBackedChatterNoKey(t *testing.T) {
+	// When no key is set, Respond returns ("", nil) — noop behaviour.
+	c := &storeBackedChatter{
+		store: &mockSecretStore{secrets: map[string]string{}},
+		cfg:   config.OpenAIConfig{Model: "test-model", MaxTokens: 16},
+	}
+	resp, err := c.Respond(context.Background(), "hello", "ch1")
 	require.NoError(t, err)
-	// noop returns empty string; the handler applies a fallback message to the user.
 	require.Empty(t, resp)
 }
 
-func TestOpenaiChatterRespond(t *testing.T) {
-	// Set up a fake OpenAI-compatible server.
+func TestStoreBackedChatterWithKey(t *testing.T) {
+	// Fake OpenAI-compatible server.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		resp := map[string]interface{}{
-			"id":      "chatcmpl-test",
-			"object":  "chat.completion",
-			"created": 1234567890,
-			"model":   "gpt-4o-mini",
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id": "chatcmpl-test", "object": "chat.completion", "created": 1234567890,
+			"model": "gpt-4o-mini",
 			"choices": []map[string]interface{}{
-				{
-					"index":         0,
-					"finish_reason": "stop",
-					"message": map[string]interface{}{
-						"role":    "assistant",
-						"content": "Hello from fake OpenAI!",
-					},
-				},
+				{"index": 0, "finish_reason": "stop",
+					"message": map[string]interface{}{"role": "assistant", "content": "Hello!"}},
 			},
-			"usage": map[string]interface{}{
-				"prompt_tokens":     10,
-				"completion_tokens": 5,
-				"total_tokens":      15,
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
+		})
 	}))
 	defer srv.Close()
 
-	// Create a real openai.Client but pointed at our fake server via env var trick.
-	// We use the package's NewClient with a fake key — the real test value here is
-	// that openaiChatter.Respond properly delegates to Client.Chat.
-	// Since we can't redirect the goopenai client's base URL without package internals,
-	// we just verify noopAIChatter works and openaiChatter construction is valid.
-	client := openai.NewClient("fake-key", "gpt-4o-mini", 16, "be helpful", "")
-	chatter := &openaiChatter{client: client}
-	// The call will fail because there is no real OpenAI server, but we verify
-	// that the error comes from the HTTP layer, not from our code.
-	_, err := chatter.Respond(context.Background(), "hello", "ch1")
-	require.Error(t, err) // expected: connection refused or auth error
-	_ = strings.Contains(err.Error(), "error") // just validate it's a string error
+	c := &storeBackedChatter{
+		store: &mockSecretStore{secrets: map[string]string{"openai_api_key": "fake-key"}},
+		cfg:   config.OpenAIConfig{BaseURL: srv.URL, Model: "gpt-4o-mini", MaxTokens: 16},
+	}
+	resp, err := c.Respond(context.Background(), "hello", "ch1")
+	require.NoError(t, err)
+	require.Equal(t, "Hello!", resp)
+}
+
+func TestStoreBackedChatterKeySetLate(t *testing.T) {
+	// Verify the store is consulted on every call: key absent → empty, then key set → response.
+	secrets := map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id": "x", "object": "chat.completion", "created": 1,
+			"model": "m",
+			"choices": []map[string]interface{}{
+				{"index": 0, "finish_reason": "stop",
+					"message": map[string]interface{}{"role": "assistant", "content": "pong"}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := &storeBackedChatter{
+		store: &mockSecretStore{secrets: secrets},
+		cfg:   config.OpenAIConfig{BaseURL: srv.URL, Model: "m", MaxTokens: 16},
+	}
+
+	resp, err := c.Respond(context.Background(), "ping", "ch")
+	require.NoError(t, err)
+	require.Empty(t, resp) // no key yet
+
+	secrets["openai_api_key"] = "fake-key" // simulate 'agenthub secret set'
+
+	resp, err = c.Respond(context.Background(), "ping", "ch")
+	require.NoError(t, err)
+	require.Equal(t, "pong", resp) // now live, no restart needed
 }
