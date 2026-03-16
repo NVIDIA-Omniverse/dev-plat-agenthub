@@ -20,8 +20,9 @@ type registerRequest struct {
 }
 
 type registerResponse struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	SlackBotToken string `json:"slack_bot_token,omitempty"`
 }
 
 type nameConflictResponse struct {
@@ -122,9 +123,14 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		_ = s.announcer.PostMessage(r.Context(), s.announceChannel, msg)
 	}
 
+	slackBotToken := ""
+	if s.store != nil {
+		slackBotToken = s.store.Get("slack_bot_token")
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(registerResponse{ID: id, Name: req.Name})
+	_ = json.NewEncoder(w).Encode(registerResponse{ID: id, Name: req.Name, SlackBotToken: slackBotToken})
 }
 
 // nameSuggestions returns a list of alternative names when the requested name is taken.

@@ -51,14 +51,15 @@ func cmdClientRun(args []string) error {
 
 // agentConfig holds all settings needed to run the agent loop.
 type agentConfig struct {
-	AgentName  string
-	AgentHost  string
-	AgentPort  string
-	LLMBaseURL string
-	LLMModel   string
-	LLMAPIKey  string
-	ServerURL  string
-	RegToken   string
+	AgentName     string
+	AgentHost     string
+	AgentPort     string
+	LLMBaseURL    string
+	LLMModel      string
+	LLMAPIKey     string
+	ServerURL     string
+	RegToken      string
+	SlackBotToken string // received from server at registration; used to post replies directly
 }
 
 // loadAgentConfig resolves agent configuration from either an env file
@@ -74,14 +75,15 @@ func loadAgentConfig(args []string) (*agentConfig, error) {
 		return loadAgentEnvFile(envPath)
 	}
 	return &agentConfig{
-		AgentName:  os.Getenv("AGENT_NAME"),
-		AgentHost:  os.Getenv("AGENT_HOST"),
-		AgentPort:  os.Getenv("AGENT_PORT"),
-		LLMBaseURL: os.Getenv("LLM_BASE_URL"),
-		LLMModel:   os.Getenv("LLM_MODEL"),
-		LLMAPIKey:  os.Getenv("LLM_API_KEY"),
-		ServerURL:  os.Getenv("AGENTHUB_SERVER_URL"),
-		RegToken:   os.Getenv("AGENTHUB_REGISTRATION_TOKEN"),
+		AgentName:     os.Getenv("AGENT_NAME"),
+		AgentHost:     os.Getenv("AGENT_HOST"),
+		AgentPort:     os.Getenv("AGENT_PORT"),
+		LLMBaseURL:    os.Getenv("LLM_BASE_URL"),
+		LLMModel:      os.Getenv("LLM_MODEL"),
+		LLMAPIKey:     os.Getenv("LLM_API_KEY"),
+		ServerURL:     os.Getenv("AGENTHUB_SERVER_URL"),
+		RegToken:      os.Getenv("AGENTHUB_REGISTRATION_TOKEN"),
+		SlackBotToken: os.Getenv("SLACK_BOT_TOKEN"),
 	}, nil
 }
 
@@ -115,14 +117,15 @@ func loadAgentEnvFile(path string) (*agentConfig, error) {
 	}
 
 	return &agentConfig{
-		AgentName:  env["AGENT_NAME"],
-		AgentHost:  env["AGENT_HOST"],
-		AgentPort:  env["AGENT_PORT"],
-		LLMBaseURL: env["LLM_BASE_URL"],
-		LLMModel:   env["LLM_MODEL"],
-		LLMAPIKey:  env["LLM_API_KEY"],
-		ServerURL:  env["AGENTHUB_SERVER_URL"],
-		RegToken:   env["AGENTHUB_REGISTRATION_TOKEN"],
+		AgentName:     env["AGENT_NAME"],
+		AgentHost:     env["AGENT_HOST"],
+		AgentPort:     env["AGENT_PORT"],
+		LLMBaseURL:    env["LLM_BASE_URL"],
+		LLMModel:      env["LLM_MODEL"],
+		LLMAPIKey:     env["LLM_API_KEY"],
+		ServerURL:     env["AGENTHUB_SERVER_URL"],
+		RegToken:      env["AGENTHUB_REGISTRATION_TOKEN"],
+		SlackBotToken: env["SLACK_BOT_TOKEN"],
 	}, nil
 }
 
@@ -276,9 +279,12 @@ func handleMessage(client, llmClient *http.Client, cfg *agentConfig, msg clientI
 		_ = updateTaskStatus(client, cfg, msg.TaskContext.TaskID, "closed", note)
 	}
 
-	// Post reply back to Slack (via agenthub inbox reply endpoint).
-	if err := postReply(client, cfg, msg.ID, reply); err != nil {
-		slog.Warn("failed to post reply", "id", msg.ID, "error", err)
+	// Post reply directly to Slack.
+	if cfg.SlackBotToken != "" && msg.Channel != "" {
+		text := fmt.Sprintf("[%s] %s", cfg.AgentName, reply)
+		if err := postSlackMessage(client, cfg.SlackBotToken, msg.Channel, text); err != nil {
+			slog.Warn("slack post failed", "id", msg.ID, "error", err)
+		}
 	}
 
 	// Ack so we don't process this message again.
@@ -361,24 +367,35 @@ func callLLM(client *http.Client, cfg *agentConfig, system, user string) (string
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
-func postReply(client *http.Client, cfg *agentConfig, msgID, text string) error {
-	type replyReq struct {
-		Text string `json:"text"`
+// postSlackMessage posts a message directly to Slack's chat.postMessage API.
+// The caller must supply a valid bot token (xoxb-...).
+func postSlackMessage(client *http.Client, botToken, channel, text string) error {
+	type slackReq struct {
+		Channel string `json:"channel"`
+		Text    string `json:"text"`
 	}
-	body, _ := json.Marshal(replyReq{Text: text})
-	req, err := http.NewRequest(http.MethodPost,
-		cfg.ServerURL+"/api/inbox/"+msgID+"/reply",
-		bytes.NewReader(body))
+	body, _ := json.Marshal(slackReq{Channel: channel, Text: text})
+	req, err := http.NewRequest(http.MethodPost, "https://slack.com/api/chat.postMessage", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Registration-Token", cfg.RegToken)
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	req.Header.Set("Authorization", "Bearer "+botToken)
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("slack API request: %w", err)
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	var slackResp struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&slackResp); err != nil {
+		return fmt.Errorf("decoding slack response: %w", err)
+	}
+	if !slackResp.OK {
+		return fmt.Errorf("slack API error: %s", slackResp.Error)
+	}
 	return nil
 }
 

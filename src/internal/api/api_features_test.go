@@ -104,35 +104,6 @@ func TestInboxAckIsIdempotent(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, w.Code)
 }
 
-func TestInboxReplyNotFoundIfMessageMissing(t *testing.T) {
-	srv, _, st := testServer(t)
-	require.NoError(t, st.Set("registration_token", "tok"))
-	r := httptest.NewRequest(http.MethodPost, "/api/inbox/msg-999/reply",
-		strings.NewReader(`{"text":"hello"}`))
-	r.Header.Set("X-Registration-Token", "tok")
-	r.Header.Set("X-Bot-Name", "bot1")
-	w := httptest.NewRecorder()
-	srv.ServeHTTP(w, r)
-	require.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestInboxReplySucceedsWithoutReplier(t *testing.T) {
-	// When no InboxReplier is configured, reply succeeds (no Slack post) and auto-acks.
-	srv, _, st := testServer(t)
-	require.NoError(t, st.Set("registration_token", "tok"))
-	msgID := srv.inbox.Enqueue("bot1", "alice", "C123", "do the thing")
-
-	r := httptest.NewRequest(http.MethodPost, "/api/inbox/"+msgID+"/reply",
-		strings.NewReader(`{"text":"done!"}`))
-	r.Header.Set("X-Registration-Token", "tok")
-	r.Header.Set("X-Bot-Name", "bot1")
-	w := httptest.NewRecorder()
-	srv.ServeHTTP(w, r)
-	require.Equal(t, http.StatusNoContent, w.Code)
-	// Message was auto-acked by the reply.
-	require.Equal(t, 0, srv.inbox.Len("bot1"))
-}
-
 // --------------------------------------------------------------------------
 // Feature 2: Heartbeat
 // --------------------------------------------------------------------------

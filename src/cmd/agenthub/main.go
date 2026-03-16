@@ -242,10 +242,6 @@ func cmdServe(_ []string) error {
 		aiChat := newReactiveChatter(sett)
 		prober := &openclawProber{cfg: cfg.Openclaw, timeout: cfg.Openclaw.LivenessTimeout}
 
-		// Wire the replier so agents can post Slack replies via POST /api/inbox/{id}/reply.
-		replyClient := goslack.New(slackBotToken)
-		srv.SetReplier(&slackReplier{client: replyClient})
-
 		// Wire the announcer for new bot registration announcements.
 		if cfg.Slack.DefaultChannel != "" {
 			announceClient := goslack.New(slackBotToken)

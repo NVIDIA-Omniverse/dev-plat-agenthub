@@ -176,8 +176,7 @@ type Server struct {
 	capacityReader CapacityReader  // optional; capacity columns hidden if nil
 	taskManager    TaskManager     // optional; kanban actions and bot callbacks disabled if nil
 	taskLogger     TaskLogger      // optional; POST /api/tasks/{id}/log disabled if nil
-	replier        InboxReplier    // optional; POST /api/inbox/{id}/reply posts to Slack if set
-	kanban         KanbanBuilder
+kanban         KanbanBuilder
 	kanbanColumns  []string        // ordered column names, used by task-create form
 	store          SecretStore
 	tmpl           map[string]*template.Template
@@ -236,10 +235,6 @@ func WithKanbanColumns(cols []string) ServerOption {
 	return func(s *Server) { s.kanbanColumns = cols }
 }
 
-// WithReplier sets the optional InboxReplier used by POST /api/inbox/{id}/reply
-// to post agent replies back to Slack.
-func WithReplier(ir InboxReplier) ServerOption { return func(s *Server) { s.replier = ir } }
-
 // WithSetupMode puts the server into first-run setup mode.
 // setupFn is called with the chosen password when the setup form is submitted.
 // It should persist initial settings and return the registration token on success.
@@ -253,10 +248,6 @@ func WithSetupMode(setupFn func(password string) (regToken string, err error)) S
 // Inbox returns the server's inbox so external callers (e.g. Slack handler)
 // can enqueue messages for agents.
 func (s *Server) Inbox() *Inbox { return s.inbox }
-
-// SetReplier sets the InboxReplier after server creation (used when the Slack
-// client is wired after NewServer returns).
-func (s *Server) SetReplier(ir InboxReplier) { s.replier = ir }
 
 // SetAnnouncer sets the BotAnnouncer and channel for registration announcements.
 func (s *Server) SetAnnouncer(a BotAnnouncer, channelID string) {
@@ -335,7 +326,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/tasks/{id}/log", s.handleTaskLog)
 	s.mux.HandleFunc("GET /api/inbox", s.handleInboxPoll)
 	s.mux.HandleFunc("POST /api/inbox/{id}/ack", s.handleInboxAck)
-	s.mux.HandleFunc("POST /api/inbox/{id}/reply", s.handleInboxReply)
 	s.mux.HandleFunc("POST /api/heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("POST /api/webhooks/subscribe", s.handleWebhookSubscribe)
 	s.mux.HandleFunc("POST /api/webhooks/unsubscribe", s.handleWebhookUnsubscribe)

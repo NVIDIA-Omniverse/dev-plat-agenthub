@@ -4,11 +4,11 @@ package api
 //
 // Agents are outbound-only (sandboxed) and cannot receive inbound Slack Socket
 // Mode connections. agenthub buffers messages on their behalf so they can poll.
+// Agents post replies directly to Slack using the bot token received at registration.
 //
 // Routes (token-authenticated):
-//   GET  /api/inbox              — poll and dequeue all pending messages
-//   POST /api/inbox/{id}/ack     — ack a single message (idempotent remove)
-//   POST /api/inbox/{id}/reply   — post a reply back to Slack on agent's behalf
+//   GET  /api/inbox          — poll all pending messages
+//   POST /api/inbox/{id}/ack — ack a single message (idempotent remove)
 
 import (
 	"context"
@@ -21,12 +21,6 @@ import (
 
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/dolt"
 )
-
-// InboxReplier is the optional interface used to post agent replies to Slack.
-// Wire a Slack client in main.go to make POST /api/inbox/{id}/reply functional.
-type InboxReplier interface {
-	PostMessage(ctx context.Context, channel, text string) error
-}
 
 // TaskContext carries the task assignment details needed for credential delivery.
 type TaskContext struct {
@@ -176,18 +170,6 @@ func dbMessageToInbox(m *dolt.InboxDBMessage) *InboxMessage {
 	return msg
 }
 
-// getMessage returns a message by ID without removing it (used before reply).
-func (b *Inbox) getMessage(botName, msgID string) *InboxMessage {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for _, m := range b.queues[botName] {
-		if m.ID == msgID {
-			return m
-		}
-	}
-	return nil
-}
-
 // --------------------------------------------------------------------------
 // HTTP handlers
 // --------------------------------------------------------------------------
@@ -242,38 +224,3 @@ func (s *Server) handleInboxAck(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleInboxReply handles POST /api/inbox/{id}/reply.
-// The agent sends a reply text; agenthub posts it to the original Slack channel.
-func (s *Server) handleInboxReply(w http.ResponseWriter, r *http.Request) {
-	if !s.validateRegistrationToken(r) {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-		return
-	}
-	botName := r.Header.Get("X-Bot-Name")
-	msgID := r.PathValue("id")
-
-	var body struct {
-		Text string `json:"text"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Text == "" {
-		http.Error(w, `{"error":"text is required"}`, http.StatusBadRequest)
-		return
-	}
-
-	msg := s.inbox.getMessage(botName, msgID)
-	if msg == nil {
-		http.Error(w, `{"error":"message not found"}`, http.StatusNotFound)
-		return
-	}
-
-	if s.replier != nil && msg.Channel != "" {
-		reply := fmt.Sprintf("[%s] %s", botName, body.Text)
-		if err := s.replier.PostMessage(r.Context(), msg.Channel, reply); err != nil {
-			http.Error(w, `{"error":"failed to post reply to Slack"}`, http.StatusInternalServerError)
-			return
-		}
-	}
-
-	s.inbox.Ack(botName, msgID)
-	w.WriteHeader(http.StatusNoContent)
-}
