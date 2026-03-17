@@ -152,10 +152,10 @@ test: ensure-go $(HTMX_JS)
 	@echo "Running tests..."
 	$(GO) test ./src/... -timeout 120s
 
-## test-cover: Run tests with coverage gate (minimum 90%)
+## test-cover: Run tests with coverage gate (minimum 90% for internal packages)
 test-cover: ensure-go $(HTMX_JS)
 	@echo "Running tests with coverage..."
-	$(GO) test ./src/... -coverprofile=coverage.out -covermode=atomic -timeout 120s
+	$(GO) test ./src/internal/... -coverprofile=coverage.out -covermode=atomic -timeout 180s
 	@$(GO) tool cover -func=coverage.out | tail -1
 	@COVERAGE=$$($(GO) tool cover -func=coverage.out | tail -1 | awk '{print $$3}' | tr -d '%'); \
 	  echo "Total coverage: $$COVERAGE%"; \

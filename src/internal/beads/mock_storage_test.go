@@ -12,6 +12,7 @@ type mockStorage struct {
 	issues          map[string]*beadslib.Issue
 	configs         map[string]string
 	comments        map[string][]*beadslib.Comment
+	lastUpdates     map[string]interface{}
 	createErr       error
 	updateErr       error
 	closeErr        error
@@ -20,6 +21,7 @@ type mockStorage struct {
 	readyWorkErr    error
 	commentErr      error
 	setConfigErr    error
+	getConfigErr    error
 	setConfigCalls  int
 	setConfigFailAt int // fail on the Nth call (1-based), 0 = use setConfigErr always
 }
@@ -56,6 +58,7 @@ func (m *mockStorage) GetIssue(_ context.Context, id string) (*beadslib.Issue, e
 }
 
 func (m *mockStorage) UpdateIssue(_ context.Context, id string, updates map[string]interface{}, _ string) error {
+	m.lastUpdates = updates
 	if m.updateErr != nil {
 		return m.updateErr
 	}
@@ -131,6 +134,8 @@ func (m *mockStorage) SetConfig(_ context.Context, key, value string) error {
 }
 
 func (m *mockStorage) GetConfig(_ context.Context, key string) (string, error) {
-	// Match real beads behavior: return ("", nil) for missing keys.
+	if m.getConfigErr != nil {
+		return "", m.getConfigErr
+	}
 	return m.configs[key], nil
 }

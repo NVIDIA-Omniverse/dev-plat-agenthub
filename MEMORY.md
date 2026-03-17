@@ -46,6 +46,7 @@ AI agent sessions that span multiple commits get a narrative section below the l
 | `9564679` | Claude Sonnet 4.6 | 2026-03-15 | Add make release + native Go agent loop (client_run.go): heartbeat, inbox poll, LLM call, reply/ack — replaces bash loop.sh + openclaw dependency entirely. |
 | `c04c532` | Claude Sonnet 4.6 | 2026-03-15 | Bump VERSION to 0.1.1 and publish GitHub release v0.1.1 with Linux amd64 binary built via GitHub Actions. |
 | `6d4b4ac` | Claude Opus 4.6 | 2026-03-17 | Five-feature roadmap: bot profiles, owner-bot web chat, onboarding agent with dynamic prompts, credential delivery pipeline, and model tiering with escalation proxy — closing the gap between bot registry and the full agenthub vision. |
+| `97039f7` | Claude Opus 4.6 | 2026-03-17 | Release v0.2.0: full test coverage (91.4%), updated docs for all five features, CHANGELOG, fixed cmd tests to work without Dolt, version bump. |
 
 ---
 

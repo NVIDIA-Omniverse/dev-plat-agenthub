@@ -77,6 +77,19 @@ These are seeded as defaults on startup. All can be overridden live via `PUT /ap
 |-----|---------|-------------|
 | `kanban.columns` | `[backlog, ready, in_progress, review, done]` | Kanban column order and names |
 
+### `llm_tiers`
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `llm_tiers.default.base_url` | `""` | Base URL for default tier LLM |
+| `llm_tiers.default.model` | `""` | Model name for default tier |
+| `llm_tiers.default.api_key_setting` | `""` | Settings store key holding the API key |
+| `llm_tiers.default.max_tokens` | `0` | Max tokens for default tier |
+| `llm_tiers.escalation.base_url` | `""` | Base URL for escalation tier LLM |
+| `llm_tiers.escalation.model` | `""` | Model name for escalation tier |
+| `llm_tiers.escalation.api_key_setting` | `""` | Settings store key holding the API key |
+| `llm_tiers.escalation.max_tokens` | `0` | Max tokens for escalation tier |
+
 ---
 
 ## Environment Variables

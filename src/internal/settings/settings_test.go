@@ -133,3 +133,71 @@ func TestConcurrentReadWrite(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestKeys(t *testing.T) {
+	s := New(newMem(nil))
+	require.Empty(t, s.Keys())
+	_ = s.Set("a", "1")
+	_ = s.Set("b", "2")
+	keys := s.Keys()
+	require.Len(t, keys, 2)
+	require.ElementsMatch(t, []string{"a", "b"}, keys)
+}
+
+func TestSetResourceCredential(t *testing.T) {
+	s := New(newMem(nil))
+	require.NoError(t, s.SetResourceCredential("r1", "token", "tok123"))
+	v := s.Get("resource:r1:token")
+	require.Equal(t, "tok123", v)
+}
+
+func TestGetResourceCredential(t *testing.T) {
+	s := New(newMem(nil))
+	_ = s.Set("resource:r1:api_key", "sk-test")
+	v := s.GetResourceCredential("r1", "api_key")
+	require.Equal(t, "sk-test", v)
+}
+
+func TestGetResourceCredentialMissing(t *testing.T) {
+	s := New(newMem(nil))
+	v := s.GetResourceCredential("r1", "api_key")
+	require.Equal(t, "", v)
+}
+
+func TestDeleteResourceCredentials(t *testing.T) {
+	s := New(newMem(nil))
+	_ = s.SetResourceCredential("r1", "token", "tok")
+	_ = s.SetResourceCredential("r1", "api_key", "key")
+	_ = s.SetResourceCredential("r1", "password", "pw")
+
+	s.DeleteResourceCredentials("r1")
+
+	require.Equal(t, "", s.GetResourceCredential("r1", "token"))
+	require.Equal(t, "", s.GetResourceCredential("r1", "api_key"))
+	require.Equal(t, "", s.GetResourceCredential("r1", "password"))
+}
+
+func TestDeletePersistsAndNotifiesWatcher(t *testing.T) {
+	p := newMem(map[string]string{"k": "v"})
+	s := New(p)
+	require.Equal(t, "v", s.Get("k"))
+	require.NoError(t, s.Delete("k"))
+	require.Equal(t, "", s.Get("k"))
+	_, ok := p.data["k"]
+	require.False(t, ok)
+}
+
+func TestSeedMultipleKeys(t *testing.T) {
+	s := New(newMem(nil))
+	s.Seed("x", "10")
+	s.Seed("y", "20")
+	require.Equal(t, "10", s.Get("x"))
+	require.Equal(t, "20", s.Get("y"))
+}
+
+func TestSetOverwritesExisting(t *testing.T) {
+	s := New(newMem(nil))
+	_ = s.Set("k", "first")
+	_ = s.Set("k", "second")
+	require.Equal(t, "second", s.Get("k"))
+}

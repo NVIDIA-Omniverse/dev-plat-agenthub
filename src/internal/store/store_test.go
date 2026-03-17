@@ -1,7 +1,10 @@
 package store
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -163,4 +166,170 @@ func TestKeys(t *testing.T) {
 	keys := s.Keys()
 	require.Len(t, keys, 3)
 	require.ElementsMatch(t, []string{"a", "b", "c"}, keys)
+}
+
+func TestKeysEmptyStore(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "test.enc"), "pw")
+	require.NoError(t, err)
+	require.Empty(t, s.Keys())
+}
+
+func TestSetOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "test.enc"), "pw")
+	require.NoError(t, err)
+
+	require.NoError(t, s.Set("k", "first"))
+	require.NoError(t, s.Set("k", "second"))
+
+	v, err := s.Get("k")
+	require.NoError(t, err)
+	require.Equal(t, "second", v)
+}
+
+func TestDeleteNonexistent(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "test.enc"), "pw")
+	require.NoError(t, err)
+	require.NoError(t, s.Delete("nonexistent"))
+}
+
+func TestDeleteAndReopen(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.enc")
+
+	s, err := Open(path, "pw")
+	require.NoError(t, err)
+	require.NoError(t, s.Set("a", "1"))
+	require.NoError(t, s.Set("b", "2"))
+	require.NoError(t, s.Delete("a"))
+
+	s2, err := Open(path, "pw")
+	require.NoError(t, err)
+
+	_, err = s2.Get("a")
+	require.Error(t, err)
+
+	v, err := s2.Get("b")
+	require.NoError(t, err)
+	require.Equal(t, "2", v)
+}
+
+func TestMultipleSetAndGet(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "test.enc"), "pw")
+	require.NoError(t, err)
+
+	for i := 0; i < 20; i++ {
+		k := fmt.Sprintf("key-%d", i)
+		v := fmt.Sprintf("value-%d", i)
+		require.NoError(t, s.Set(k, v))
+	}
+
+	for i := 0; i < 20; i++ {
+		k := fmt.Sprintf("key-%d", i)
+		v := fmt.Sprintf("value-%d", i)
+		got, err := s.Get(k)
+		require.NoError(t, err)
+		require.Equal(t, v, got)
+	}
+	require.Len(t, s.Keys(), 20)
+}
+
+func TestSetResourceCredential(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "test.enc"), "pw")
+	require.NoError(t, err)
+
+	require.NoError(t, s.SetResourceCredential("r1", "token", "tok123"))
+
+	v, err := s.GetResourceCredential("r1", "token")
+	require.NoError(t, err)
+	require.Equal(t, "tok123", v)
+}
+
+func TestGetResourceCredentialMissing(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "test.enc"), "pw")
+	require.NoError(t, err)
+
+	_, err = s.GetResourceCredential("r1", "token")
+	require.Error(t, err)
+}
+
+func TestDeleteResourceCredentials(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "test.enc"), "pw")
+	require.NoError(t, err)
+
+	require.NoError(t, s.SetResourceCredential("r1", "token", "tok"))
+	require.NoError(t, s.SetResourceCredential("r1", "api_key", "key"))
+
+	s.DeleteResourceCredentials("r1")
+
+	_, err = s.GetResourceCredential("r1", "token")
+	require.Error(t, err)
+	_, err = s.GetResourceCredential("r1", "api_key")
+	require.Error(t, err)
+}
+
+func TestUnicodeValues(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.enc")
+
+	s, err := Open(path, "pw")
+	require.NoError(t, err)
+	require.NoError(t, s.Set("emoji", "🔑"))
+	require.NoError(t, s.Set("cjk", "こんにちは"))
+
+	s2, err := Open(path, "pw")
+	require.NoError(t, err)
+
+	v, err := s2.Get("emoji")
+	require.NoError(t, err)
+	require.Equal(t, "🔑", v)
+
+	v, err = s2.Get("cjk")
+	require.NoError(t, err)
+	require.Equal(t, "こんにちは", v)
+}
+
+func TestEncryptDecryptEmptyPlaintext(t *testing.T) {
+	key := deriveKey([]byte("testpw"), make([]byte, saltLen))
+	nonce := make([]byte, nonceLen)
+	_, _ = rand.Read(nonce)
+
+	ct, err := encrypt(key, nonce, []byte(""))
+	require.NoError(t, err)
+
+	pt, err := decrypt(key, nonce, ct)
+	require.NoError(t, err)
+	require.Equal(t, "", string(pt))
+}
+
+func TestOpenNonJSONPlaintext(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.enc")
+
+	salt := make([]byte, saltLen)
+	key := deriveKey([]byte("pw"), salt)
+	nonce := make([]byte, nonceLen)
+
+	ct, err := encrypt(key, nonce, []byte("not json at all"))
+	require.NoError(t, err)
+
+	env := envelope{
+		Version:    envelopeVersion,
+		Salt:       base64.StdEncoding.EncodeToString(salt),
+		Nonce:      base64.StdEncoding.EncodeToString(nonce),
+		Ciphertext: base64.StdEncoding.EncodeToString(ct),
+	}
+	raw, err := json.Marshal(env)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, raw, 0600))
+
+	_, err = Open(path, "pw")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parsing store data")
 }

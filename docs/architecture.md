@@ -53,7 +53,7 @@ agenthub is a Go service that acts as a hub between Slack users and a fleet of o
 
 ### Dolt DB (`src/internal/dolt/`)
 - agenthub's own schema stored in a Dolt SQL server (MySQL-compatible)
-- Manages: bot registry (`openclaw_instances`), inbox (`inbox_messages`), settings, projects, task assignments
+- Manages: bot registry (`openclaw_instances`), inbox (`inbox_messages`), settings, projects, task assignments, `bot_profiles`, `chat_messages`, `usage_log`
 - Schema managed via sequential migration files embedded in the binary
 - `DoltPersister` implements the `settings.Persister` interface with AES-256-GCM per-row encryption
 
@@ -83,6 +83,34 @@ agenthub is a Go service that acts as a hub between Slack users and a fleet of o
 - Sources: Slack DMs with `@botname` prefix, per-agent Slack channel messages
 - Messages include originating Slack user ID and channel for reply routing
 - `POST /api/inbox/{id}/reply` posts agent replies back to the Slack thread
+
+### Bot Capability Profiles (`src/internal/dolt/profiles.go`)
+- Structured identity for each bot: description, specializations, tools, hardware, max concurrent tasks
+- CRUD via `bot_profiles` Dolt table
+- Shown in Slack `/agenthub list` output and admin bots page
+- Profile can be set during registration or via `PUT /api/bots/{name}/profile`
+
+### Owner-Bot Web Chat (`src/internal/api/chat_handler.go`)
+- Private chat between admin and individual bots at `/admin/chat/{botName}`
+- Messages stored in `chat_messages` Dolt table
+- Real-time updates via SSE
+- Bot client detects `owner:chat` inbox messages and replies through the chat API
+
+### Onboarding Agent (`src/internal/openai/system_prompts.go`)
+- Dynamic system prompt built before each Slack LLM call
+- Injects live bot registry and project data so the assistant can answer agenthub-specific questions
+- Covers: installation, bot registration, slash commands, admin UI, project management
+
+### Credential Delivery Pipeline (`src/internal/api/credentials_handler.go`)
+- Task assignment creates a `TaskAssignment` record with a credential URL
+- Agent fetches credentials via `GET /api/credentials/{botName}` — scoped to active assignments only
+- Task close auto-revokes the assignment, cutting off credential access
+
+### Model Tiering (`src/internal/api/llm_handler.go`)
+- `POST /api/llm/escalate` proxies requests to a configured stronger model
+- Usage logging in `usage_log` Dolt table (bot, tier, model, tokens, latency)
+- Agent client has a `shouldEscalate` heuristic that detects uncertainty in the default model's reply
+- Admin can view usage summaries via `GET /api/usage`
 
 ## Data Flow: Agent Registration
 

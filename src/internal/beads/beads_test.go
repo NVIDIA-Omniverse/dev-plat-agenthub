@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	beadslib "github.com/steveyegge/beads"
 	"github.com/stretchr/testify/require"
@@ -169,4 +170,252 @@ func TestGetTaskNotFound(t *testing.T) {
 
 	_, err := c.GetTask(ctx, "nonexistent-id")
 	require.Error(t, err)
+}
+
+func TestNew_Error(t *testing.T) {
+	ctx := context.Background()
+	_, err := New(ctx, "/nonexistent/path/dolt")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "opening beads db")
+}
+
+func TestUpdateFields_Success(t *testing.T) {
+	ctx := context.Background()
+	m := newMockStorage()
+	c := NewWithStorage(m)
+
+	issue, err := c.CreateTask(ctx, TaskRequest{Title: "T", Actor: "a"})
+	require.NoError(t, err)
+
+	err = c.UpdateFields(ctx, issue.ID, "New Title", "desc", "in_progress",
+		2, "bug", "bot1", 30, "criteria", "notes", "2026-06-15", "p1,p2", "actor")
+	require.NoError(t, err)
+
+	require.Equal(t, "New Title", m.lastUpdates["title"])
+	require.Equal(t, beadslib.Status("in_progress"), m.lastUpdates["status"])
+	require.Equal(t, beadslib.IssueType("bug"), m.lastUpdates["issue_type"])
+	require.Equal(t, 2, m.lastUpdates["priority"])
+	require.Equal(t, 30, m.lastUpdates["estimated_minutes"])
+	require.Equal(t, []string{"p1", "p2"}, m.lastUpdates["labels"])
+	require.NotNil(t, m.lastUpdates["due_at"])
+}
+
+func TestUpdateFields_MinimalFields(t *testing.T) {
+	ctx := context.Background()
+	m := newMockStorage()
+	c := NewWithStorage(m)
+
+	issue, err := c.CreateTask(ctx, TaskRequest{Title: "T", Actor: "a"})
+	require.NoError(t, err)
+
+	err = c.UpdateFields(ctx, issue.ID, "", "desc", "", -1, "", "", 0, "", "", "", "", "actor")
+	require.NoError(t, err)
+
+	_, hasTitle := m.lastUpdates["title"]
+	require.False(t, hasTitle)
+	_, hasStatus := m.lastUpdates["status"]
+	require.False(t, hasStatus)
+	_, hasType := m.lastUpdates["issue_type"]
+	require.False(t, hasType)
+	_, hasPriority := m.lastUpdates["priority"]
+	require.False(t, hasPriority)
+	_, hasEst := m.lastUpdates["estimated_minutes"]
+	require.False(t, hasEst)
+	_, hasDue := m.lastUpdates["due_at"]
+	require.False(t, hasDue)
+	_, hasLabels := m.lastUpdates["labels"]
+	require.False(t, hasLabels)
+}
+
+func TestUpdateFields_Error(t *testing.T) {
+	ctx := context.Background()
+	m := newMockStorage()
+	c := NewWithStorage(m)
+
+	issue, err := c.CreateTask(ctx, TaskRequest{Title: "T", Actor: "a"})
+	require.NoError(t, err)
+
+	m.updateErr = errors.New("update failed")
+	err = c.UpdateFields(ctx, issue.ID, "title", "", "", 0, "", "", 0, "", "", "", "", "a")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "updating task")
+}
+
+func TestUpdateFields_InvalidDueAt(t *testing.T) {
+	ctx := context.Background()
+	m := newMockStorage()
+	c := NewWithStorage(m)
+
+	issue, err := c.CreateTask(ctx, TaskRequest{Title: "T", Actor: "a"})
+	require.NoError(t, err)
+
+	err = c.UpdateFields(ctx, issue.ID, "", "", "", -1, "", "", 0, "", "", "not-a-date", "", "a")
+	require.NoError(t, err)
+	_, hasDue := m.lastUpdates["due_at"]
+	require.False(t, hasDue)
+}
+
+func TestCreateTask_WithAllOptionalFields(t *testing.T) {
+	ctx := context.Background()
+	m := newMockStorage()
+	c := NewWithStorage(m)
+
+	issue, err := c.CreateTask(ctx, TaskRequest{
+		Title:            "Full task",
+		Description:      "desc",
+		Status:           "in_progress",
+		IssueType:        "bug",
+		Priority:         1,
+		Assignee:         "bot1",
+		EstimatedMinutes: 60,
+		DueAt:            "2026-12-25",
+		Labels:           "urgent, backend, api",
+		Actor:            "user1",
+	})
+	require.NoError(t, err)
+	require.Equal(t, beadslib.Status("in_progress"), issue.Status)
+	require.Equal(t, beadslib.IssueType("bug"), issue.IssueType)
+	require.NotNil(t, issue.EstimatedMinutes)
+	require.Equal(t, 60, *issue.EstimatedMinutes)
+	require.NotNil(t, issue.DueAt)
+	expected, _ := time.Parse("2006-01-02", "2026-12-25")
+	require.Equal(t, expected, *issue.DueAt)
+	require.Equal(t, []string{"urgent", "backend", "api"}, issue.Labels)
+}
+
+func TestCreateTask_InvalidDueAt(t *testing.T) {
+	ctx := context.Background()
+	m := newMockStorage()
+	c := NewWithStorage(m)
+
+	issue, err := c.CreateTask(ctx, TaskRequest{
+		Title: "Bad date",
+		DueAt: "not-a-date",
+		Actor: "a",
+	})
+	require.NoError(t, err)
+	require.Nil(t, issue.DueAt)
+}
+
+func TestCreateTask_EmptyLabels(t *testing.T) {
+	ctx := context.Background()
+	m := newMockStorage()
+	c := NewWithStorage(m)
+
+	issue, err := c.CreateTask(ctx, TaskRequest{
+		Title:  "No labels",
+		Labels: "  ,  , ",
+		Actor:  "a",
+	})
+	require.NoError(t, err)
+	require.Empty(t, issue.Labels)
+}
+
+func TestEnsureInitialized_GetConfigError(t *testing.T) {
+	ctx := context.Background()
+	m := newMockStorage()
+	m.getConfigErr = errors.New("config read failed")
+	c := NewWithStorage(m)
+
+	err := c.EnsureInitialized(ctx, "ah")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "checking beads init")
+}
+
+func TestEnsureInitialized_SetConfigCreatedAtFails(t *testing.T) {
+	ctx := context.Background()
+	m := newMockStorage()
+	m.setConfigErr = errors.New("write failed")
+	m.setConfigFailAt = 2
+	c := NewWithStorage(m)
+
+	err := c.EnsureInitialized(ctx, "ah")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "setting beads created_at")
+}
+
+func TestListReadyWork_Error(t *testing.T) {
+	ctx := context.Background()
+	m := newMockStorage()
+	m.readyWorkErr = errors.New("db error")
+	c := NewWithStorage(m)
+
+	_, err := c.ListReadyWork(ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "listing ready work")
+}
+
+func TestCloseTask_Error(t *testing.T) {
+	ctx := context.Background()
+	m := newMockStorage()
+	m.closeErr = errors.New("close failed")
+	c := NewWithStorage(m)
+
+	err := c.CloseTask(ctx, "some-id", "done", "actor")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "closing task")
+}
+
+func TestListAll_Error(t *testing.T) {
+	ctx := context.Background()
+	m := newMockStorage()
+	m.searchErr = errors.New("search failed")
+	c := NewWithStorage(m)
+
+	_, err := c.ListAll(ctx, beadslib.IssueFilter{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "listing all tasks")
+}
+
+func TestAddComment_Error(t *testing.T) {
+	ctx := context.Background()
+	m := newMockStorage()
+	m.commentErr = errors.New("comment failed")
+	c := NewWithStorage(m)
+
+	err := c.AddComment(ctx, "some-id", "author", "text")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "adding comment")
+}
+
+func TestUpdateStatus_WithNote(t *testing.T) {
+	ctx := context.Background()
+	m := newMockStorage()
+	c := NewWithStorage(m)
+
+	issue, err := c.CreateTask(ctx, TaskRequest{Title: "T", Actor: "a"})
+	require.NoError(t, err)
+
+	err = c.UpdateStatus(ctx, issue.ID, "in_progress", "starting work", "actor")
+	require.NoError(t, err)
+	require.Len(t, m.comments[issue.ID], 1)
+	require.Equal(t, "starting work", m.comments[issue.ID][0].Text)
+}
+
+func TestUpdateStatus_CommentError(t *testing.T) {
+	ctx := context.Background()
+	m := newMockStorage()
+	c := NewWithStorage(m)
+
+	issue, err := c.CreateTask(ctx, TaskRequest{Title: "T", Actor: "a"})
+	require.NoError(t, err)
+
+	m.commentErr = errors.New("comment failed")
+	err = c.UpdateStatus(ctx, issue.ID, "in_progress", "note", "actor")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "adding status note")
+}
+
+func TestUpdateStatus_UpdateError(t *testing.T) {
+	ctx := context.Background()
+	m := newMockStorage()
+	c := NewWithStorage(m)
+
+	issue, err := c.CreateTask(ctx, TaskRequest{Title: "T", Actor: "a"})
+	require.NoError(t, err)
+
+	m.updateErr = errors.New("update failed")
+	err = c.UpdateStatus(ctx, issue.ID, "in_progress", "", "actor")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "updating status")
 }

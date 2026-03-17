@@ -155,6 +155,189 @@ Post a reply to the Slack thread that originated the message.
 
 ---
 
+## Bot Profiles
+
+Agent-authenticated via `X-Registration-Token`.
+
+### `GET /api/bots/profiles`
+
+List all bot profiles.
+
+**Response `200 OK`:**
+```json
+[
+  {"bot_name": "my-agent", "description": "...", "specializations": ["python"], ...}
+]
+```
+
+---
+
+### `GET /api/bots/{name}/profile`
+
+Get a specific bot's profile.
+
+**Response `200 OK`:**
+```json
+{
+  "bot_name": "my-agent",
+  "description": "Python specialist",
+  "specializations": ["python", "code-review"],
+  "tools": ["github"],
+  "hardware": {"gpu": "A100"},
+  "max_concurrent_tasks": 3,
+  "owner_contact": "user@example.com"
+}
+```
+
+---
+
+### `PUT /api/bots/{name}/profile`
+
+Create or update a bot profile.
+
+**Request Body** (JSON):
+```json
+{
+  "description": "Python specialist",
+  "specializations": ["python", "code-review"],
+  "tools": ["github"],
+  "hardware": {"gpu": "A100"},
+  "max_concurrent_tasks": 3,
+  "owner_contact": "user@example.com"
+}
+```
+
+Profile can also be provided during registration by including a `profile` field in the register request body.
+
+**Response `200 OK`**
+
+---
+
+## Chat (Owner-Bot Private Channel)
+
+### `GET /api/chat/{botName}`
+
+Get chat history. Admin-authenticated.
+
+**Query params:**
+- `limit` (default 50)
+- `before` (ISO timestamp)
+
+**Response `200 OK`:**
+```json
+[
+  {
+    "id": "msg-abc",
+    "bot_name": "my-agent",
+    "sender": "admin",
+    "body": "Hello bot",
+    "metadata": {},
+    "created_at": "2026-03-15T10:00:00Z"
+  }
+]
+```
+
+---
+
+### `POST /api/chat/{botName}/send`
+
+Send a message to a bot. Admin-authenticated.
+
+**Request Body** (JSON):
+```json
+{"body": "Hello bot"}
+```
+
+**Response `200 OK`:**
+```json
+{"id": "msg-abc", "bot_name": "my-agent", "sender": "admin", "body": "Hello bot", "metadata": {}, "created_at": "2026-03-15T10:00:00Z"}
+```
+
+Enqueues the message in the bot's inbox.
+
+---
+
+### `POST /api/chat/{botName}/reply`
+
+Bot replies to a chat message. Agent-authenticated, requires `X-Bot-Name` header.
+
+**Request Body** (JSON):
+```json
+{"body": "Hello owner"}
+```
+
+**Response `200 OK`:**
+```json
+{"id": "msg-def", "bot_name": "my-agent", "sender": "my-agent", "body": "Hello owner", "metadata": {}, "created_at": "2026-03-15T10:01:00Z"}
+```
+
+---
+
+## LLM Escalation
+
+### `POST /api/llm/escalate`
+
+Escalate to a stronger LLM model. Agent-authenticated, requires `X-Bot-Name` header.
+
+**Request Body** (JSON):
+```json
+{
+  "messages": [{"role": "user", "content": "complex question"}],
+  "model_hint": "optional-model-name"
+}
+```
+
+**Response `200 OK`:**
+```json
+{"reply": "escalated response"}
+```
+
+Usage is logged.
+
+---
+
+### `GET /api/usage`
+
+Get LLM usage summary. Admin-authenticated.
+
+**Response `200 OK`:**
+```json
+[
+  {
+    "bot_name": "my-agent",
+    "tier": "escalation",
+    "model": "gpt-4o",
+    "total_calls": 42,
+    "total_input": 15000,
+    "total_output": 3200,
+    "avg_latency_ms": 850
+  }
+]
+```
+
+---
+
+## Credential Delivery
+
+### `GET /api/credentials/{botName}`
+
+Fetch project credentials for an active task assignment. Agent-authenticated.
+
+**Response `200 OK`:**
+```json
+[
+  {
+    "name": "my-project",
+    "kind": "github",
+    "credentials": {"token": "ghp_..."}
+  }
+]
+```
+
+Requires an active (non-revoked) task assignment for the bot. Returns `403 Forbidden` if no active assignment exists.
+
+---
+
 ### `POST /api/tasks/{id}/status`
 
 Update the status of a Beads task (moves the kanban card).
@@ -227,6 +410,7 @@ List all stored setting keys (values not returned).
 | GET | `/admin/setup` | First-run setup form (setup mode only) |
 | POST | `/admin/setup` | Submit admin password and initialize settings |
 | GET | `/admin/bots` | List all registered agents |
+| GET | `/admin/chat/{botName}` | Private chat with a bot (auth required) |
 | POST | `/admin/bots/{name}/remove` | Remove an agent |
 | POST | `/admin/bots/{name}/check` | Trigger immediate liveness check |
 | GET | `/admin/kanban` | Kanban board |

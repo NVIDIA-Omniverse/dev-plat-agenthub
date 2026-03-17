@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -194,23 +195,75 @@ func TestRunSetupPasswordMismatch(t *testing.T) {
 	require.Contains(t, err.Error(), "passwords do not match")
 }
 
+// mockOpenDBForSetup overrides openDB with a mock that handles Migrate,
+// OpenDoltPersister (salt query + insert), and Set calls (3 settings keys).
+// Returns a cleanup function (also registered via t.Cleanup).
+func mockOpenDBForSetup(t *testing.T) {
+	t.Helper()
+	orig := openDB
+	t.Cleanup(func() { openDB = orig })
+	openDB = func(_ string) (*dolt.DB, error) {
+		db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+		if err != nil {
+			return nil, err
+		}
+		mock.MatchExpectationsInOrder(false)
+
+		// Liberal expectations: accept any query/exec that the setup flow needs.
+		// Migrate: 1 CREATE schema_migrations + 1 SELECT + 16 migrations × 2 = 33 execs.
+		// Then OpenDoltPersister + Set × 3 + IsInitialised.
+		for i := 0; i < 50; i++ {
+			mock.ExpectExec(`.*`).WillReturnResult(sqlmock.NewResult(0, 0))
+		}
+		mock.ExpectQuery(`SELECT name FROM schema_migrations`).
+			WillReturnRows(sqlmock.NewRows([]string{"name"}))
+		mock.ExpectQuery(`SELECT value FROM settings WHERE`).
+			WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery(`SELECT COUNT.*FROM settings`).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+		return dolt.NewDB(db), nil
+	}
+}
+
 func TestRunSetupSuccess(t *testing.T) {
 	cfgPath := minimalConfig(t)
 	t.Setenv("AGENTHUB_CONFIG", cfgPath)
-	// Pipe two matching passwords.
+	mockOpenDBForSetup(t)
 	pipeStdin(t, "securepassword", "securepassword")
 	err := run([]string{"setup"})
 	require.NoError(t, err)
 }
 
 func TestRunServeFailsWithoutSetup(t *testing.T) {
-	// Store file exists but admin_password_hash was never set.
-	cfgPath := minimalConfigWithStore(t, "anypassword")
+	// When IsInitialised returns false, serve enters setup mode.
+	// Use an invalid address so the setup-mode HTTP server fails immediately.
+	cfgPath := minimalConfigWithAddr(t, "invalid:::addr")
 	t.Setenv("AGENTHUB_CONFIG", cfgPath)
+
+	orig := openDB
+	t.Cleanup(func() { openDB = orig })
+	openDB = func(_ string) (*dolt.DB, error) {
+		db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+		if err != nil {
+			return nil, err
+		}
+		mock.MatchExpectationsInOrder(false)
+		for i := 0; i < 50; i++ {
+			mock.ExpectExec(`.*`).WillReturnResult(sqlmock.NewResult(0, 0))
+		}
+		mock.ExpectQuery(`SELECT name FROM schema_migrations`).
+			WillReturnRows(sqlmock.NewRows([]string{"name"}))
+		mock.ExpectQuery(`SELECT value FROM settings WHERE`).
+			WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery(`SELECT COUNT.*FROM settings`).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+		return dolt.NewDB(db), nil
+	}
+
 	pipeStdin(t, "anypassword")
 	err := run([]string{"serve"})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "admin password hash not found")
 }
 
 func TestRunServeSetupMode(t *testing.T) {
@@ -224,19 +277,23 @@ func TestRunServeSetupMode(t *testing.T) {
 }
 
 func TestRunServeFailsAtDolt(t *testing.T) {
-	// Run setup first, then serve — should fail at dolt.Open (no server).
 	cfgPath := minimalConfig(t)
 	t.Setenv("AGENTHUB_CONFIG", cfgPath)
 
-	// Setup phase.
+	mockOpenDBForSetup(t)
 	pipeStdin(t, "mypassword", "mypassword")
 	require.NoError(t, run([]string{"setup"}))
 
-	// Serve phase — fails at dolt.Open.
+	// Now override openDB to fail on serve.
+	orig := openDB
+	t.Cleanup(func() { openDB = orig })
+	openDB = func(_ string) (*dolt.DB, error) {
+		return nil, fmt.Errorf("dolt connection refused")
+	}
+
 	pipeStdin(t, "mypassword")
 	err := run([]string{"serve"})
 	require.Error(t, err)
-	// Should fail at dolt or session secret lookup.
 	require.NotContains(t, err.Error(), "loading config")
 }
 
@@ -256,9 +313,29 @@ func TestCmdServeConfigLoadError(t *testing.T) {
 }
 
 func TestCmdServeReadPasswordError(t *testing.T) {
-	// Store file exists, config loads OK, but stdin is closed → readPassword returns EOF.
 	cfgPath := minimalConfigWithStore(t, "somepassword")
 	t.Setenv("AGENTHUB_CONFIG", cfgPath)
+
+	orig := openDB
+	t.Cleanup(func() { openDB = orig })
+	openDB = func(_ string) (*dolt.DB, error) {
+		db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+		if err != nil {
+			return nil, err
+		}
+		mock.MatchExpectationsInOrder(false)
+		for i := 0; i < 50; i++ {
+			mock.ExpectExec(`.*`).WillReturnResult(sqlmock.NewResult(0, 0))
+		}
+		mock.ExpectQuery(`SELECT name FROM schema_migrations`).
+			WillReturnRows(sqlmock.NewRows([]string{"name"}))
+		mock.ExpectQuery(`SELECT value FROM settings WHERE`).
+			WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery(`SELECT COUNT.*FROM settings`).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+		return dolt.NewDB(db), nil
+	}
+
 	pipeStdin(t) // no lines → stdin closed immediately
 	err := run([]string{"serve"})
 	require.Error(t, err)
@@ -269,7 +346,7 @@ func TestRunServeWithMockDB(t *testing.T) {
 	cfgPath := minimalConfig(t)
 	t.Setenv("AGENTHUB_CONFIG", cfgPath)
 
-	// Run setup so admin_password_hash and session_secret exist.
+	mockOpenDBForSetup(t)
 	pipeStdin(t, "testpw", "testpw")
 	require.NoError(t, run([]string{"setup"}))
 
@@ -379,7 +456,7 @@ func TestRunServeFailsAtMigrate(t *testing.T) {
 	cfgPath := minimalConfig(t)
 	t.Setenv("AGENTHUB_CONFIG", cfgPath)
 
-	// Run setup so credentials exist.
+	mockOpenDBForSetup(t)
 	pipeStdin(t, "testpw", "testpw")
 	require.NoError(t, run([]string{"setup"}))
 
@@ -443,11 +520,10 @@ func TestDoltCapacityUpdaterError(t *testing.T) {
 }
 
 func TestRunServeHttpBindFails(t *testing.T) {
-	// Use an invalid address so ListenAndServe fails immediately.
 	cfgPath := minimalConfigWithAddr(t, "invalid:::addr")
 	t.Setenv("AGENTHUB_CONFIG", cfgPath)
 
-	// Run setup.
+	mockOpenDBForSetup(t)
 	pipeStdin(t, "testpw", "testpw")
 	require.NoError(t, run([]string{"setup"}))
 
