@@ -294,6 +294,50 @@ var migrations = []migration{
 		SQL: `ALTER TABLE openclaw_instances
 			ADD COLUMN slack_channel_id VARCHAR(255) NOT NULL DEFAULT ''`,
 	},
+	{
+		Name: "014_create_bot_profiles",
+		SQL: `CREATE TABLE IF NOT EXISTS bot_profiles (
+			bot_name             VARCHAR(255) NOT NULL,
+			description          TEXT         NOT NULL DEFAULT '',
+			specializations      JSON         NOT NULL DEFAULT ('[]'),
+			tools                JSON         NOT NULL DEFAULT ('[]'),
+			hardware             JSON         NOT NULL DEFAULT ('{}'),
+			max_concurrent_tasks INT          NOT NULL DEFAULT 1,
+			owner_contact        VARCHAR(255) NOT NULL DEFAULT '',
+			created_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (bot_name)
+		)`,
+	},
+	{
+		Name: "015_create_chat_messages",
+		SQL: `CREATE TABLE IF NOT EXISTS chat_messages (
+			id         VARCHAR(64)  NOT NULL,
+			bot_name   VARCHAR(255) NOT NULL,
+			sender     VARCHAR(255) NOT NULL,
+			body       TEXT         NOT NULL DEFAULT '',
+			metadata   JSON         NOT NULL DEFAULT ('{}'),
+			created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			KEY idx_chat_bot_time (bot_name, created_at)
+		)`,
+	},
+	{
+		Name: "016_create_usage_log",
+		SQL: `CREATE TABLE IF NOT EXISTS usage_log (
+			id            VARCHAR(64)  NOT NULL,
+			bot_name      VARCHAR(255) NOT NULL,
+			tier          VARCHAR(32)  NOT NULL DEFAULT 'default',
+			model         VARCHAR(255) NOT NULL DEFAULT '',
+			input_tokens  INT          NOT NULL DEFAULT 0,
+			output_tokens INT          NOT NULL DEFAULT 0,
+			latency_ms    INT          NOT NULL DEFAULT 0,
+			created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			KEY idx_usage_bot (bot_name),
+			KEY idx_usage_created (created_at)
+		)`,
+	},
 }
 
 // Instance represents a registered openclaw bot.

@@ -75,17 +75,18 @@ ifeq ($(shell uname),Darwin)
 	@which bc   >/dev/null 2>&1 || brew install bc
 else ifeq ($(shell uname),Linux)
 	@echo "==> Installing Linux build dependencies..."
-	@if which apt-get >/dev/null 2>&1; then \
-		sudo apt-get update -q && \
-		sudo apt-get install -y \
+	@SUDO=$$([ "$$(id -u)" = "0" ] && echo "" || echo "sudo"); \
+	if which apt-get >/dev/null 2>&1; then \
+		$$SUDO apt-get update -q && \
+		$$SUDO apt-get install -y \
 			build-essential curl bc \
 			libicu-dev pkg-config; \
 	elif which dnf >/dev/null 2>&1; then \
-		sudo dnf install -y \
+		$$SUDO dnf install -y \
 			gcc gcc-c++ curl bc \
 			libicu-devel pkgconfig; \
 	elif which yum >/dev/null 2>&1; then \
-		sudo yum install -y \
+		$$SUDO yum install -y \
 			gcc gcc-c++ curl bc \
 			libicu-devel pkgconfig; \
 	else \
@@ -93,13 +94,14 @@ else ifeq ($(shell uname),Linux)
 		echo "  Please install manually: gcc/clang, libicu-dev, curl, bc"; \
 	fi
 	@# Install Go from go.dev/dl/ if missing or too old for GOTOOLCHAIN support (< 1.21).
-	@GO_MINOR=$$(go version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1 | cut -d. -f2); \
+	@SUDO=$$([ "$$(id -u)" = "0" ] && echo "" || echo "sudo"); \
+	GO_MINOR=$$(go version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1 | cut -d. -f2); \
 	if ! which go >/dev/null 2>&1 || [ -z "$$GO_MINOR" ] || [ "$$GO_MINOR" -lt "$(GO_BOOTSTRAP_MIN)" ]; then \
 		ARCH=$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'); \
 		GOTAR="go$(GO_VERSION).linux-$$ARCH.tar.gz"; \
 		echo "==> Installing Go $(GO_VERSION) from go.dev/dl/ (system Go is too old or missing)..."; \
 		curl -sSfL "https://go.dev/dl/$$GOTAR" -o /tmp/$$GOTAR; \
-		sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf /tmp/$$GOTAR; \
+		$$SUDO rm -rf /usr/local/go && $$SUDO tar -C /usr/local -xzf /tmp/$$GOTAR; \
 		rm -f /tmp/$$GOTAR; \
 		echo "==> Go $(GO_VERSION) installed to /usr/local/go"; \
 		echo "    Add /usr/local/go/bin to your PATH if it is not already there."; \

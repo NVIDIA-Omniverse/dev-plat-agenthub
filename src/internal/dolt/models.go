@@ -85,3 +85,49 @@ type ResourceGrant struct {
 	Name         string          `json:"name"`
 	Meta         json.RawMessage `json:"meta"`
 }
+
+// ChatMessage represents a message in an owner-bot private chat.
+type ChatMessage struct {
+	ID        string
+	BotName   string
+	Sender    string          // "owner" or the bot's name
+	Body      string
+	Metadata  json.RawMessage
+	CreatedAt time.Time
+}
+
+// UsageLog records a single LLM API call for usage tracking.
+type UsageLog struct {
+	ID           string
+	BotName      string
+	Tier         string
+	Model        string
+	InputTokens  int
+	OutputTokens int
+	LatencyMs    int
+	CreatedAt    time.Time
+}
+
+// UsageSummary aggregates usage by bot, tier, and model.
+type UsageSummary struct {
+	BotName      string
+	Tier         string
+	Model        string
+	TotalCalls   int
+	TotalInput   int
+	TotalOutput  int
+	AvgLatencyMs int
+}
+
+// BotProfile describes a bot's capabilities and constraints (matches Instance.Name).
+type BotProfile struct {
+	BotName            string
+	Description        string
+	Specializations    []string
+	Tools              []string
+	Hardware           json.RawMessage
+	MaxConcurrentTasks int
+	OwnerContact       string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}

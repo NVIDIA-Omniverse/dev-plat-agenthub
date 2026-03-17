@@ -118,18 +118,23 @@ func FormatBotList(bots []BotSummary) string {
 		if b.Chatty {
 			chatty = " (chatty)"
 		}
-		fmt.Fprintf(&sb, "• *%s* — %s:%d — %s%s\n", b.Name, b.Host, b.Port, status, chatty)
+		specs := ""
+		if len(b.Specializations) > 0 {
+			specs = " (" + strings.Join(b.Specializations, ", ") + ")"
+		}
+		fmt.Fprintf(&sb, "• *%s* — %s:%d — %s%s%s\n", b.Name, b.Host, b.Port, status, chatty, specs)
 	}
 	return sb.String()
 }
 
 // BotSummary is a minimal view of a registered openclaw instance for Slack messages.
 type BotSummary struct {
-	Name    string
-	Host    string
-	Port    int
-	IsAlive bool
-	Chatty  bool
+	Name            string
+	Host            string
+	Port            int
+	IsAlive         bool
+	Chatty          bool
+	Specializations []string
 }
 
 // InboxEnqueuer buffers a message for a named agent to poll.

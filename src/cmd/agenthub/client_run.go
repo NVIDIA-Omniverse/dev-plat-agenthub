@@ -251,6 +251,15 @@ func handleMessage(client, llmClient *http.Client, cfg *agentConfig, msg clientI
 		_ = updateTaskStatus(client, cfg, msg.TaskContext.TaskID, "in_progress", "")
 	}
 
+	if msg.TaskContext != nil && msg.TaskContext.CredentialURL != "" {
+		if creds, err := fetchCredentials(client, cfg, msg.TaskContext.CredentialURL); err == nil {
+			fmt.Printf("[agenthub] Credentials received for task %s: %d resource(s)\n",
+				msg.TaskContext.TaskID, len(creds))
+		} else {
+			slog.Warn("credential fetch failed", "url", msg.TaskContext.CredentialURL, "error", err)
+		}
+	}
+
 	// Build reply via LLM (or echo if not configured).
 	var reply string
 	if cfg.LLMBaseURL != "" && cfg.LLMAPIKey != "" && cfg.LLMModel != "" {
@@ -270,6 +279,14 @@ func handleMessage(client, llmClient *http.Client, cfg *agentConfig, msg clientI
 		reply = fmt.Sprintf("Received (LLM not configured): %s", msg.Text)
 	}
 
+	if reply != "" && cfg.ServerURL != "" && shouldEscalate(reply) {
+		escalated, escErr := callEscalation(llmClient, cfg, msg.Text)
+		if escErr == nil && escalated != "" {
+			reply = escalated
+			fmt.Printf("[agenthub] Escalated to stronger model for message %s\n", msg.ID)
+		}
+	}
+
 	// Update task status.
 	if msg.TaskContext != nil && msg.TaskContext.TaskID != "" {
 		note := reply
@@ -277,6 +294,13 @@ func handleMessage(client, llmClient *http.Client, cfg *agentConfig, msg clientI
 			note = note[:500] + "..."
 		}
 		_ = updateTaskStatus(client, cfg, msg.TaskContext.TaskID, "closed", note)
+	}
+
+	if strings.HasPrefix(msg.From, "owner:chat") {
+		if err := postChatReply(client, cfg, reply); err != nil {
+			slog.Warn("chat reply failed", "id", msg.ID, "error", err)
+		}
+		return ackMessage(client, cfg, msg.ID)
 	}
 
 	// Post reply directly to Slack.
@@ -365,7 +389,88 @@ func callLLM(client *http.Client, cfg *agentConfig, system, user string) (string
 	return strings.TrimSpace(llmResp.Choices[0].Message.Content), nil
 }
 
-// ── HTTP helpers ──────────────────────────────────────────────────────────────
+func shouldEscalate(reply string) bool {
+	markers := []string{
+		"I'm not sure",
+		"I don't know",
+		"I cannot",
+		"I'm unable",
+		"beyond my capabilities",
+		"I'd recommend asking",
+		"not confident",
+	}
+	lower := strings.ToLower(reply)
+	for _, m := range markers {
+		if strings.Contains(lower, strings.ToLower(m)) {
+			return true
+		}
+	}
+	return false
+}
+
+func callEscalation(client *http.Client, cfg *agentConfig, userMessage string) (string, error) {
+	type escMsg struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	type escReq struct {
+		Messages  []escMsg `json:"messages"`
+		MaxTokens int      `json:"max_tokens"`
+	}
+	body, _ := json.Marshal(escReq{
+		Messages: []escMsg{
+			{Role: "system", Content: fmt.Sprintf("You are %s, an AI assistant. Answer thoroughly and helpfully.", cfg.AgentName)},
+			{Role: "user", Content: userMessage},
+		},
+		MaxTokens: 2048,
+	})
+	req, err := http.NewRequest(http.MethodPost, cfg.ServerURL+"/api/llm/escalate", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Registration-Token", cfg.RegToken)
+	req.Header.Set("X-Bot-Name", cfg.AgentName)
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("escalation request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("escalation returned %d", resp.StatusCode)
+	}
+	var result struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decoding escalation: %w", err)
+	}
+	return strings.TrimSpace(result.Content), nil
+}
+
+func fetchCredentials(client *http.Client, cfg *agentConfig, credURL string) ([]json.RawMessage, error) {
+	req, err := http.NewRequest(http.MethodGet, credURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Registration-Token", cfg.RegToken)
+	req.Header.Set("X-Bot-Name", cfg.AgentName)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("credential request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("credentials returned %d", resp.StatusCode)
+	}
+	var result struct {
+		Resources []json.RawMessage `json:"resources"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding credentials: %w", err)
+	}
+	return result.Resources, nil
+}
 
 // postSlackMessage posts a message directly to Slack's chat.postMessage API.
 // The caller must supply a valid bot token (xoxb-...).
@@ -434,5 +539,30 @@ func updateTaskStatus(client *http.Client, cfg *agentConfig, taskID, status, not
 		return err
 	}
 	resp.Body.Close()
+	return nil
+}
+
+func postChatReply(client *http.Client, cfg *agentConfig, body string) error {
+	type chatReplyReq struct {
+		Body string `json:"body"`
+	}
+	data, _ := json.Marshal(chatReplyReq{Body: body})
+	req, err := http.NewRequest(http.MethodPost,
+		cfg.ServerURL+"/api/chat/"+cfg.AgentName+"/reply",
+		bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Registration-Token", cfg.RegToken)
+	req.Header.Set("X-Bot-Name", cfg.AgentName)
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("chat reply request: %w", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("chat reply returned %d", resp.StatusCode)
+	}
 	return nil
 }

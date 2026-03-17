@@ -7,16 +7,27 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/dolt"
 )
 
+type registerProfile struct {
+	Description        string          `json:"description,omitempty"`
+	Specializations    []string        `json:"specializations,omitempty"`
+	Tools              []string        `json:"tools,omitempty"`
+	Hardware           json.RawMessage `json:"hardware,omitempty"`
+	MaxConcurrentTasks int             `json:"max_concurrent_tasks,omitempty"`
+	OwnerContact       string          `json:"owner_contact,omitempty"`
+}
+
 type registerRequest struct {
-	Name           string `json:"name"`
-	Host           string `json:"host"`
-	Port           int    `json:"port"`
-	ChannelID      string `json:"channel_id"`
-	OwnerSlackUser string `json:"owner_slack_user"`
+	Name           string           `json:"name"`
+	Host           string           `json:"host"`
+	Port           int              `json:"port"`
+	ChannelID      string           `json:"channel_id"`
+	OwnerSlackUser string           `json:"owner_slack_user"`
+	Profile        *registerProfile `json:"profile,omitempty"`
 }
 
 type registerResponse struct {
@@ -96,6 +107,27 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if err := s.registrar.CreateInstance(r.Context(), inst); err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
+	}
+
+	if req.Profile != nil {
+		if pdb := s.profileDB(); pdb != nil {
+			hw := req.Profile.Hardware
+			if hw == nil {
+				hw = json.RawMessage("{}")
+			}
+			now := time.Now().UTC()
+			_ = pdb.UpsertBotProfile(r.Context(), dolt.BotProfile{
+				BotName:            req.Name,
+				Description:        req.Profile.Description,
+				Specializations:    req.Profile.Specializations,
+				Tools:              req.Profile.Tools,
+				Hardware:           hw,
+				MaxConcurrentTasks: req.Profile.MaxConcurrentTasks,
+				OwnerContact:       req.Profile.OwnerContact,
+				CreatedAt:          now,
+				UpdatedAt:          now,
+			})
+		}
 	}
 
 	// Create a dedicated Slack channel for this agent (best-effort).

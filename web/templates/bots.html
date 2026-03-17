@@ -29,6 +29,7 @@
             <th>Name</th>
             <th>Host:Port</th>
             <th>Owner</th>
+            <th>Profile</th>
             <th>Status</th>
             <th>GPU Free</th>
             <th>Jobs Q/R</th>
@@ -42,6 +43,16 @@
         <td class="bot-name">{{.Name}}</td>
         <td class="bot-host">{{.Host}}:{{.Port}}</td>
         <td>{{if .OwnerSlackUser}}{{.OwnerSlackUser}}{{else}}—{{end}}</td>
+        <td class="bot-profile">
+            {{if .Profile}}
+                {{if .Profile.Description}}<div class="profile-desc">{{.Profile.Description}}</div>{{end}}
+                {{if .Profile.Specializations}}
+                    <div class="profile-tags">{{range .Profile.Specializations}}<span class="tag">{{.}}</span> {{end}}</div>
+                {{end}}
+            {{else}}
+                <span class="muted">—</span>
+            {{end}}
+        </td>
         <td>
             {{if .IsAlive}}
                 <span class="badge badge-online">online</span>
@@ -53,6 +64,7 @@
         <td>{{if .Capacity}}{{.Capacity.JobsQueued}}/{{.Capacity.JobsRunning}}{{else}}—{{end}}</td>
         <td class="ts">{{if .LastSeenAt}}{{.LastSeenAt}}{{else}}—{{end}}</td>
         <td class="actions">
+            <a href="/admin/chat/{{.Name}}" class="btn-sm">Chat</a>
             <form method="POST" action="/admin/bots/{{.Name}}/check" style="display:inline"
                   hx-post="/admin/bots/{{.Name}}/check"
                   hx-target="closest tr"
@@ -66,7 +78,7 @@
         </td>
     </tr>
     {{else}}
-    <tr><td colspan="8" class="empty-row">No bots registered yet.</td></tr>
+    <tr><td colspan="9" class="empty-row">No bots registered yet.</td></tr>
     {{end}}
     </tbody>
 </table>

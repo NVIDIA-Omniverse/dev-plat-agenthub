@@ -22,6 +22,7 @@ type Config struct {
 	Slack    SlackConfig    `yaml:"slack"`
 	Openclaw OpenclawConfig `yaml:"openclaw"`
 	OpenAI   OpenAIConfig   `yaml:"openai"`
+	LLMTiers LLMTiersConfig `yaml:"llm_tiers"`
 	Beads    BeadsConfig    `yaml:"beads"`
 	Dolt     DoltConfig     `yaml:"dolt"`
 	Log      LogConfig      `yaml:"log"`
@@ -65,6 +66,20 @@ type OpenAIConfig struct {
 	Model        string `yaml:"model"`
 	MaxTokens    int    `yaml:"max_tokens"`
 	SystemPrompt string `yaml:"system_prompt"`
+}
+
+// LLMTierConfig holds settings for a single LLM tier.
+type LLMTierConfig struct {
+	BaseURL       string `yaml:"base_url"`
+	Model         string `yaml:"model"`
+	APIKeySetting string `yaml:"api_key_setting"`
+	MaxTokens     int    `yaml:"max_tokens"`
+}
+
+// LLMTiersConfig holds the model tiering configuration.
+type LLMTiersConfig struct {
+	Default    LLMTierConfig `yaml:"default"`
+	Escalation LLMTierConfig `yaml:"escalation"`
 }
 
 // BeadsConfig holds Beads/Dolt database settings.

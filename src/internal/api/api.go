@@ -331,6 +331,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/webhooks/unsubscribe", s.handleWebhookUnsubscribe)
 	s.mux.HandleFunc("GET /api/webhooks/subscriptions", s.handleWebhookListSubscriptions)
 	s.mux.HandleFunc("POST /api/webhooks/{channel}", s.handleWebhookReceive)
+	s.mux.HandleFunc("GET /api/bots/profiles", s.handleListProfiles)
+	s.mux.HandleFunc("GET /api/bots/{name}/profile", s.handleGetProfile)
+	s.mux.HandleFunc("PUT /api/bots/{name}/profile", s.handleUpsertProfile)
+	s.mux.HandleFunc("POST /api/chat/{botName}/reply", s.handleChatReply)
+	s.mux.HandleFunc("POST /api/llm/escalate", s.handleLLMEscalate)
 	// Credential delivery (token-authenticated).
 	s.mux.HandleFunc("GET /api/credentials/{task_assignment_id}", s.handleGetCredentials)
 	// Resource API (user-authenticated: cookie or Bearer token).
@@ -365,8 +370,12 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /admin/secrets", protected(http.HandlerFunc(s.handleSecretsSubmit)))
 	s.mux.Handle("PUT /api/settings/{key}", protected(http.HandlerFunc(s.handlePutSetting)))
 	s.mux.Handle("GET /api/settings", protected(http.HandlerFunc(s.handleGetSettings)))
+	s.mux.Handle("GET /api/usage", protected(http.HandlerFunc(s.handleUsageSummary)))
 	s.mux.Handle("GET /admin/events", protected(http.HandlerFunc(s.handleAdminEvents)))
 	s.mux.Handle("GET /admin/heartbeats", protected(http.HandlerFunc(s.handleAdminHeartbeats)))
+	s.mux.HandleFunc("GET /api/chat/{botName}", s.handleChatHistory)
+	s.mux.HandleFunc("POST /api/chat/{botName}/send", s.handleChatSend)
+	s.mux.Handle("GET /admin/chat/{botName}", protected(http.HandlerFunc(s.handleChatPage)))
 	// Resources admin UI.
 	s.mux.Handle("GET /admin/resources", protected(http.HandlerFunc(s.handleResourcesPage)))
 	s.mux.Handle("POST /admin/resources", protected(http.HandlerFunc(s.handleResourceCreate)))
@@ -464,10 +473,11 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // Protected admin handlers
 // --------------------------------------------------------------------------
 
-// botWithCapacity pairs an Instance with its optional capacity record.
+// botWithCapacity pairs an Instance with its optional capacity and profile.
 type botWithCapacity struct {
 	*dolt.Instance
 	Capacity *dolt.Capacity
+	Profile  *dolt.BotProfile
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -504,14 +514,22 @@ func (s *Server) handleBotList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Merge capacity data if available.
 	var caps map[string]*dolt.Capacity
 	if s.capacityReader != nil {
 		caps, _ = s.capacityReader.GetAllCapacities(r.Context())
 	}
+	var profiles map[string]*dolt.BotProfile
+	if pdb := s.profileDB(); pdb != nil {
+		if ps, err := pdb.ListBotProfiles(r.Context()); err == nil {
+			profiles = make(map[string]*dolt.BotProfile, len(ps))
+			for _, p := range ps {
+				profiles[p.BotName] = p
+			}
+		}
+	}
 	result := make([]botWithCapacity, len(bots))
 	for i, b := range bots {
-		result[i] = botWithCapacity{Instance: b, Capacity: caps[b.ID]}
+		result[i] = botWithCapacity{Instance: b, Capacity: caps[b.ID], Profile: profiles[b.Name]}
 	}
 
 	pd := pageData{Title: "Bots", Data: result}

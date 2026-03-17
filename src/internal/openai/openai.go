@@ -50,11 +50,18 @@ func NewClient(apiKey, model string, maxTokens int, systemPrompt string, baseURL
 // Chat sends the messages to OpenAI and returns the assistant's response.
 // The configured system prompt is automatically prepended.
 func (c *Client) Chat(ctx context.Context, messages []Message) (string, error) {
-	apiMessages := []goopenai.ChatCompletionMessage{
-		{
+	return c.ChatWithSystem(ctx, c.systemPrompt, messages)
+}
+
+// ChatWithSystem sends messages with an explicit system prompt, bypassing the
+// client's configured system prompt.
+func (c *Client) ChatWithSystem(ctx context.Context, systemPrompt string, messages []Message) (string, error) {
+	apiMessages := make([]goopenai.ChatCompletionMessage, 0, len(messages)+1)
+	if systemPrompt != "" {
+		apiMessages = append(apiMessages, goopenai.ChatCompletionMessage{
 			Role:    goopenai.ChatMessageRoleSystem,
-			Content: c.systemPrompt,
-		},
+			Content: systemPrompt,
+		})
 	}
 	for _, m := range messages {
 		apiMessages = append(apiMessages, goopenai.ChatCompletionMessage{

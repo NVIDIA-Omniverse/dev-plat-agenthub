@@ -1,0 +1,99 @@
+{{template "layout.html" .}}
+{{define "title"}}Chat — agenthub{{end}}
+{{define "content"}}
+<div class="page-header">
+    <h1>Chat with {{.Data.BotName}}</h1>
+    <a href="/admin/bots" class="btn-sm">← Back to Bots</a>
+</div>
+
+<div class="chat-container" style="display:flex;gap:1.5rem;">
+    <div class="chat-main" style="flex:1;">
+        <div id="chat-messages" class="chat-messages" style="border:1px solid var(--border);border-radius:8px;padding:1rem;height:500px;overflow-y:auto;display:flex;flex-direction:column;gap:0.5rem;">
+            {{range .Data.Messages}}
+            <div class="chat-msg {{if eq .Sender "owner"}}chat-owner{{else}}chat-bot{{end}}" style="padding:0.5rem 0.75rem;border-radius:8px;max-width:80%;{{if eq .Sender "owner"}}align-self:flex-end;background:var(--accent-blue,#e3f2fd);{{else}}align-self:flex-start;background:var(--card-bg,#f5f5f5);{{end}}">
+                <div class="chat-sender" style="font-size:0.75rem;font-weight:600;margin-bottom:2px;">{{.Sender}}</div>
+                <div class="chat-body">{{.Body}}</div>
+                <div class="chat-time" style="font-size:0.7rem;opacity:0.6;margin-top:2px;">{{.CreatedAt.Format "15:04 UTC"}}</div>
+            </div>
+            {{else}}
+            <p class="muted" id="chat-empty">No messages yet. Send one below.</p>
+            {{end}}
+        </div>
+
+        <form id="chat-form" style="margin-top:0.75rem;display:flex;gap:0.5rem;"
+              hx-post="/api/chat/{{.Data.BotName}}/send"
+              hx-swap="none"
+              hx-on::after-request="this.reset(); refreshChat();">
+            <input type="text" name="body" placeholder="Type a message…" required
+                   style="flex:1;padding:0.5rem 0.75rem;border:1px solid var(--border);border-radius:6px;" autocomplete="off">
+            <button type="submit" class="btn-sm" style="padding:0.5rem 1rem;">Send</button>
+        </form>
+    </div>
+
+    {{if .Data.Profile}}
+    <div class="chat-sidebar" style="width:250px;border:1px solid var(--border);border-radius:8px;padding:1rem;">
+        <h3 style="margin-top:0;">{{.Data.BotName}}</h3>
+        {{if .Data.Profile.Description}}<p style="font-size:0.9rem;">{{.Data.Profile.Description}}</p>{{end}}
+        {{if .Data.Profile.Specializations}}
+        <div style="margin-top:0.5rem;">
+            <strong style="font-size:0.8rem;">Specializations</strong><br>
+            {{range .Data.Profile.Specializations}}<span class="tag">{{.}}</span> {{end}}
+        </div>
+        {{end}}
+        {{if .Data.Profile.Tools}}
+        <div style="margin-top:0.5rem;">
+            <strong style="font-size:0.8rem;">Tools</strong><br>
+            {{range .Data.Profile.Tools}}<span class="tag">{{.}}</span> {{end}}
+        </div>
+        {{end}}
+    </div>
+    {{end}}
+</div>
+
+<script>
+(function() {
+    var sse = new EventSource('/admin/events');
+    var botName = '{{.Data.BotName}}';
+
+    sse.addEventListener('chat-message', function(e) {
+        if (e.data === botName) {
+            refreshChat();
+        }
+    });
+
+    function refreshChat() {
+        fetch('/api/chat/' + botName + '?limit=50')
+            .then(function(r) { return r.json(); })
+            .then(function(msgs) {
+                var container = document.getElementById('chat-messages');
+                if (!msgs || msgs.length === 0) {
+                    container.innerHTML = '<p class="muted">No messages yet.</p>';
+                    return;
+                }
+                var html = msgs.map(function(m) {
+                    var cls = m.sender === 'owner' ? 'chat-owner' : 'chat-bot';
+                    var align = m.sender === 'owner'
+                        ? 'align-self:flex-end;background:var(--accent-blue,#e3f2fd);'
+                        : 'align-self:flex-start;background:var(--card-bg,#f5f5f5);';
+                    var time = new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+                    return '<div class="chat-msg ' + cls + '" style="padding:0.5rem 0.75rem;border-radius:8px;max-width:80%;' + align + '">' +
+                        '<div class="chat-sender" style="font-size:0.75rem;font-weight:600;margin-bottom:2px;">' + escHtml(m.sender) + '</div>' +
+                        '<div class="chat-body">' + escHtml(m.body) + '</div>' +
+                        '<div class="chat-time" style="font-size:0.7rem;opacity:0.6;margin-top:2px;">' + time + '</div>' +
+                        '</div>';
+                }).join('');
+                container.innerHTML = html;
+                container.scrollTop = container.scrollHeight;
+            });
+    }
+
+    function escHtml(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // Scroll to bottom on load.
+    var msgs = document.getElementById('chat-messages');
+    if (msgs) msgs.scrollTop = msgs.scrollHeight;
+})();
+</script>
+{{end}}

@@ -239,7 +239,7 @@ func cmdServe(_ []string) error {
 	slackAppToken := sett.Get("slack_app_token")
 	if slackBotToken != "" && slackAppToken != "" {
 		regToken := sett.Get("registration_token")
-		aiChat := newReactiveChatter(sett)
+		aiChat := newReactiveChatter(sett, db, cfg.Server.PublicURL)
 		prober := &openclawProber{cfg: cfg.Openclaw, timeout: cfg.Openclaw.LivenessTimeout}
 
 		// Wire the announcer for new bot registration announcements.
@@ -250,7 +250,7 @@ func cmdServe(_ []string) error {
 
 		slackDeps := &islack.Deps{
 			BotRegistry:        &doltBotRegistry{db: db, cfg: cfg.Openclaw},
-			TaskManager:        &slackTaskManager{beads: beadsClient, db: db},
+			TaskManager:        &slackTaskManager{beads: beadsClient, db: db, inbox: srv.Inbox(), publicURL: cfg.Server.PublicURL},
 			AIChat:             aiChat,
 			OpenclawCheck:      prober,
 			Inbox:              srv.Inbox(),
@@ -541,7 +541,7 @@ func loadTemplates() (map[string]*template.Template, error) {
 	pages := []string{
 		"login.html", "setup.html", "dashboard.html",
 		"bots.html", "kanban.html", "secrets.html", "task-create.html", "task-detail.html",
-		"resources.html", "projects.html",
+		"resources.html", "projects.html", "chat.html",
 	}
 	out := make(map[string]*template.Template, len(pages)+1)
 	for _, page := range pages {
@@ -805,6 +805,9 @@ func (r *doltBotRegistry) ListBots(ctx context.Context, channelID string) ([]isl
 	for i, inst := range instances {
 		out[i] = islack.BotSummary{Name: inst.Name, Host: inst.Host, Port: inst.Port,
 			IsAlive: inst.IsAlive, Chatty: inst.Chatty}
+		if profile, err := r.db.GetBotProfile(ctx, inst.Name); err == nil && profile != nil {
+			out[i].Specializations = profile.Specializations
+		}
 	}
 	return out, nil
 }
@@ -821,8 +824,12 @@ func (r *doltBotRegistry) AliveBots(ctx context.Context, channelID string) ([]is
 	var out []islack.BotSummary
 	for _, inst := range instances {
 		if inst.IsAlive {
-			out = append(out, islack.BotSummary{Name: inst.Name, Host: inst.Host,
-				Port: inst.Port, IsAlive: true, Chatty: inst.Chatty})
+			s := islack.BotSummary{Name: inst.Name, Host: inst.Host,
+				Port: inst.Port, IsAlive: true, Chatty: inst.Chatty}
+			if profile, pErr := r.db.GetBotProfile(ctx, inst.Name); pErr == nil && profile != nil {
+				s.Specializations = profile.Specializations
+			}
+			out = append(out, s)
 		}
 	}
 	return out, nil
@@ -844,8 +851,10 @@ func newRegistryUUID() (string, error) {
 // slackTaskManager implements slack.TaskManager using beads for task creation
 // and dolt for bot lookup (to route to alive bots when no specific bot is named).
 type slackTaskManager struct {
-	beads *beads.Client
-	db    *dolt.DB
+	beads     *beads.Client
+	db        *dolt.DB
+	inbox     *api.Inbox
+	publicURL string
 }
 
 func (m *slackTaskManager) CreateAndRoute(ctx context.Context, desc, botName, actor string) (string, string, error) {
@@ -856,7 +865,6 @@ func (m *slackTaskManager) CreateAndRoute(ctx context.Context, desc, botName, ac
 	if err != nil {
 		return "", "", fmt.Errorf("creating task: %w", err)
 	}
-	// Route to a specific bot if named, otherwise pick any alive bot.
 	assigned := botName
 	if assigned == "" && m.db != nil {
 		if bots, err := m.db.ListAllInstances(ctx); err == nil {
@@ -871,6 +879,39 @@ func (m *slackTaskManager) CreateAndRoute(ctx context.Context, desc, botName, ac
 	if assigned != "" {
 		if err := m.beads.AssignTask(ctx, issue.ID, assigned, actor); err != nil {
 			slog.Warn("slack: could not assign task to bot", "task", issue.ID, "bot", assigned, "error", err)
+		}
+		if m.db != nil && m.inbox != nil {
+			agentID := ""
+			if bots, err := m.db.ListAllInstances(ctx); err == nil {
+				for _, b := range bots {
+					if b.Name == assigned {
+						agentID = b.ID
+						break
+					}
+				}
+			}
+			if agentID != "" {
+				assignmentID := fmt.Sprintf("ta-%x", time.Now().UnixNano())
+				ta := dolt.TaskAssignment{
+					ID:         assignmentID,
+					TaskID:     issue.ID,
+					AgentID:    agentID,
+					AssignedBy: actor,
+					AssignedAt: time.Now().UTC(),
+				}
+				if err := m.db.CreateTaskAssignment(ctx, ta); err == nil {
+					credURL := ""
+					if m.publicURL != "" {
+						credURL = m.publicURL + "/api/credentials/" + assignmentID
+					}
+					tc := &api.TaskContext{
+						TaskAssignmentID: assignmentID,
+						TaskID:           issue.ID,
+						CredentialURL:    credURL,
+					}
+					m.inbox.EnqueueWithContext(assigned, actor, "", fmt.Sprintf("New task: [%s] %s", issue.ID, desc), tc)
+				}
+			}
 		}
 	}
 	return issue.ID, assigned, nil
@@ -901,13 +942,24 @@ func (r *slackReplier) PostMessage(_ context.Context, channel, text string) erro
 // immediate propagation of setting changes (no restart required).
 
 type reactiveChatter struct {
-	mu     sync.RWMutex
-	sett   *settings.Store
-	client *openai.Client // nil when key is unset
+	mu             sync.RWMutex
+	sett           *settings.Store
+	client         *openai.Client
+	botLister      api.BotLister
+	projectLister  interface{ ListAllProjects(ctx context.Context) ([]*dolt.Project, error) }
+	publicURL      string
 }
 
-func newReactiveChatter(s *settings.Store) *reactiveChatter {
-	c := &reactiveChatter{sett: s}
+func newReactiveChatter(s *settings.Store, db api.BotLister, publicURL string) *reactiveChatter {
+	c := &reactiveChatter{sett: s, publicURL: publicURL}
+	if db != nil {
+		c.botLister = db
+		if pl, ok := db.(interface {
+			ListAllProjects(ctx context.Context) ([]*dolt.Project, error)
+		}); ok {
+			c.projectLister = pl
+		}
+	}
 	c.rebuild()
 	rebuild := func(_ string) { c.rebuild() }
 	s.Watch("openai_api_key", rebuild)
@@ -942,7 +994,33 @@ func (c *reactiveChatter) Respond(ctx context.Context, msg, _ string) (string, e
 	if client == nil {
 		return "", nil
 	}
-	return client.Chat(ctx, []openai.Message{{Role: "user", Content: msg}})
+
+	oc := openai.OnboardingContext{PublicURL: c.publicURL}
+	if c.botLister != nil {
+		if bots, err := c.botLister.ListAllInstances(ctx); err == nil {
+			for _, b := range bots {
+				bi := openai.BotInfo{Name: b.Name, IsAlive: b.IsAlive}
+				if pdb, ok := c.botLister.(interface {
+					GetBotProfile(ctx context.Context, name string) (*dolt.BotProfile, error)
+				}); ok {
+					if profile, err := pdb.GetBotProfile(ctx, b.Name); err == nil && profile != nil {
+						bi.Specializations = profile.Specializations
+					}
+				}
+				oc.Bots = append(oc.Bots, bi)
+			}
+		}
+	}
+	if c.projectLister != nil {
+		if projects, err := c.projectLister.ListAllProjects(ctx); err == nil {
+			for _, p := range projects {
+				oc.Projects = append(oc.Projects, openai.ProjectInfo{Name: p.Name, Description: p.Description})
+			}
+		}
+	}
+	systemPrompt := openai.BuildOnboardingPrompt(oc)
+
+	return client.ChatWithSystem(ctx, systemPrompt, []openai.Message{{Role: "user", Content: msg}})
 }
 
 func cfg2int(s string, def int) int {

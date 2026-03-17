@@ -54,6 +54,15 @@ func (s *Server) handleTaskStatusUpdate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.events.Broadcast("kanban-update", issueID)
+
+	if req.Status == "closed" {
+		if adb := s.assignmentDB(); adb != nil {
+			if ta, err := adb.GetActiveAssignmentByTask(r.Context(), issueID); err == nil && ta != nil {
+				_ = adb.RevokeTaskAssignment(r.Context(), ta.ID)
+			}
+		}
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 

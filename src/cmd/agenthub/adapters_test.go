@@ -412,7 +412,7 @@ func fakeOpenAIServer(response string) *httptest.Server {
 
 func TestReactiveChatterNoKey(t *testing.T) {
 	s := newTestSettings(nil)
-	c := newReactiveChatter(s)
+	c := newReactiveChatter(s, nil, "")
 	resp, err := c.Respond(context.Background(), "hello", "ch")
 	require.NoError(t, err)
 	require.Empty(t, resp)
@@ -428,7 +428,7 @@ func TestReactiveChatterWithKey(t *testing.T) {
 		"openai.model":    "m",
 		"openai.max_tokens_str": "16",
 	})
-	c := newReactiveChatter(s)
+	c := newReactiveChatter(s, nil, "")
 
 	resp, err := c.Respond(context.Background(), "hi", "ch")
 	require.NoError(t, err)
@@ -446,7 +446,7 @@ func TestReactiveChatterKeySetLate(t *testing.T) {
 		"openai.model":    "m",
 		"openai.max_tokens_str": "16",
 	})
-	c := newReactiveChatter(s)
+	c := newReactiveChatter(s, nil, "")
 
 	resp, err := c.Respond(context.Background(), "ping", "ch")
 	require.NoError(t, err)

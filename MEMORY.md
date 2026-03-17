@@ -45,6 +45,7 @@ AI agent sessions that span multiple commits get a narrative section below the l
 | `36d7aaf` | Claude Sonnet 4.6 | 2026-03-14 | Fix Slack message handler: only process DMs (channel 'D*'), not public channel messages; fix noopAIChatter to not leak config errors to users. |
 | `9564679` | Claude Sonnet 4.6 | 2026-03-15 | Add make release + native Go agent loop (client_run.go): heartbeat, inbox poll, LLM call, reply/ack — replaces bash loop.sh + openclaw dependency entirely. |
 | `c04c532` | Claude Sonnet 4.6 | 2026-03-15 | Bump VERSION to 0.1.1 and publish GitHub release v0.1.1 with Linux amd64 binary built via GitHub Actions. |
+| `6d4b4ac` | Claude Opus 4.6 | 2026-03-17 | Five-feature roadmap: bot profiles, owner-bot web chat, onboarding agent with dynamic prompts, credential delivery pipeline, and model tiering with escalation proxy — closing the gap between bot registry and the full agenthub vision. |
 
 ---
 
@@ -134,3 +135,42 @@ every commit to be logged here. Backfilled all 24 prior commits. Deployed `0.1.0
 
 Per jordanh's instruction: this conversation itself (adding Commandment 5 and backfilling
 the commit log) is logged as the `(next)` entry above.
+
+---
+
+### 2026-03-17 — Claude Opus 4.6: Five-Feature Roadmap Implementation
+
+**Context:** The project had solid infrastructure (bot registry, Slack integration, kanban,
+inbox relay) but five gaps stood between it and the full agenthub vision: structured bot
+identity, private owner-bot communication, intelligent onboarding, credential delivery, and
+model tiering.
+
+**Phase 1 — Bot Capability Profiles:** Added `bot_profiles` table and full CRUD. Bots now
+self-describe at registration with specializations, tools, hardware specs, and max concurrent
+tasks. The `/agenthub list` Slack output shows specializations. The bots admin page displays
+profile details. 7 files changed, 3 new files.
+
+**Phase 2 — Built-in Web Chat:** Added `chat_messages` table, three API endpoints
+(history, send, reply), and a real-time chat UI at `/admin/chat/{botName}` with SSE push.
+The agent client detects `owner:chat` messages and replies through the chat API instead of
+Slack, keeping conversations private. 8 files changed, 4 new files.
+
+**Phase 3 — Helpful Onboarding Agent:** Built `BuildOnboardingPrompt()` which assembles
+a system prompt containing agenthub install docs, slash command reference, admin UI guide,
+and live bot/project state. The `reactiveChatter` now calls `ChatWithSystem` so every Slack
+interaction is informed by current agenthub knowledge. 5 files changed, 2 new files.
+
+**Phase 4 — Credential Delivery Pipeline:** Wired the existing scaffolding (projects,
+resources, assignments) into a complete flow: task assignment creates a `TaskAssignment`
+record, enqueues an inbox message with `TaskContext` including a credential URL, and the
+agent client fetches scoped credentials. Task close auto-revokes the assignment so
+credentials become unfetchable. 3 files changed.
+
+**Phase 5 — Model Tiering:** Added `POST /api/llm/escalate` as a proxy to a configured
+"strong" model, with per-request usage logging in a new `usage_log` table. The agent client
+has a `shouldEscalate` heuristic (detects uncertainty markers in the default model's reply)
+and transparently retries via the escalation endpoint. Admin can view usage summaries via
+`GET /api/usage`. 6 files changed, 6 new files.
+
+**Total:** 3 new migrations, 9 new API endpoints, 15 new files, 13 modified files. All 11
+internal packages pass tests.
