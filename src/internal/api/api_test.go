@@ -32,7 +32,7 @@ type mockKanbanBuilder struct {
 	err   error
 }
 
-func (m *mockKanbanBuilder) Build(_ context.Context) (*kanban.Board, error) {
+func (m *mockKanbanBuilder) Build(_ context.Context, _ kanban.BoardFilter) (*kanban.Board, error) {
 	return m.board, m.err
 }
 

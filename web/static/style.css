@@ -414,6 +414,35 @@ tbody td {
   font-style: italic;
 }
 
+/* ── Kanban filter bar ── */
+.kanban-filters {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.filter-chip {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+.filter-chip:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+  text-decoration: none;
+}
+.filter-chip.active {
+  background: var(--green);
+  border-color: var(--green);
+  color: #000;
+}
+
 /* ── Kanban board ── */
 .kanban {
   display: flex;

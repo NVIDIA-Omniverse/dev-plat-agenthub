@@ -25,7 +25,7 @@ func TestBuildBoardEmpty(t *testing.T) {
 	m := &mockSearcher{}
 	columns := []string{"backlog", "open", "in_progress", "done"}
 
-	board, err := BuildBoard(context.Background(), m, columns)
+	board, err := BuildBoard(context.Background(), m, columns, BoardFilter{})
 	require.NoError(t, err)
 	require.NotNil(t, board)
 	require.Len(t, board.Columns, len(columns))
@@ -41,7 +41,7 @@ func TestBuildBoardWithIssues(t *testing.T) {
 	}
 
 	columns := []string{"open", "in_progress", "done"}
-	board, err := BuildBoard(context.Background(), m, columns)
+	board, err := BuildBoard(context.Background(), m, columns, BoardFilter{})
 	require.NoError(t, err)
 	require.Equal(t, 2, board.IssueCount())
 
@@ -69,7 +69,7 @@ func TestBuildBoardUnknownStatusGoesToOther(t *testing.T) {
 
 	// "blocked" is not in the columns list.
 	columns := []string{"open", "in_progress", "done"}
-	board, err := BuildBoard(context.Background(), m, columns)
+	board, err := BuildBoard(context.Background(), m, columns, BoardFilter{})
 	require.NoError(t, err)
 
 	otherCol := board.Column("other")

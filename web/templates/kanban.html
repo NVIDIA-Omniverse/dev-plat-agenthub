@@ -10,6 +10,10 @@
             hx-swap="innerHTML"
             onclick="openTaskPanel()">+ New Task</button>
 </div>
+<div class="kanban-filters">
+    <a href="/admin/kanban" class="filter-chip{{if eq .Data.CurrentAgent ""}} active{{end}}">All</a>
+    {{range .Data.Agents}}<a href="/admin/kanban?agent={{.Name}}" class="filter-chip{{if eq $.Data.CurrentAgent .Name}} active{{end}}">{{.Name}}</a>{{end}}
+</div>
 {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
 
 <!-- Slide-over task panel -->
@@ -23,9 +27,9 @@
 
   <!-- Upper pane: kanban board -->
   <div class="kanban-pane" id="kanban-pane-top">
-    <div id="kanban-container">
+    <div id="kanban-container" data-agent-filter="{{.Data.CurrentAgent}}">
     <div class="kanban">
-    {{with .Data}}
+    {{with .Data.Board}}
     {{range .Columns}}
     <div class="kanban-col"
          data-status="{{.Status}}"
@@ -194,10 +198,14 @@
     function refreshKanban() {
         var spinner = document.getElementById('kanban-spinner');
         if (spinner) spinner.style.display = 'inline';
-        htmx.ajax('GET', '/admin/kanban', {
+        var container = document.getElementById('kanban-container');
+        var agent = container ? container.dataset.agentFilter : '';
+        var url = '/admin/kanban';
+        if (agent) url += '?agent=' + encodeURIComponent(agent);
+        htmx.ajax('GET', url, {
             target: '#kanban-container',
             swap: 'innerHTML',
-            select: '.kanban'
+            select: '#kanban-container'
         }).then(function() {
             if (spinner) spinner.style.display = '';
         });

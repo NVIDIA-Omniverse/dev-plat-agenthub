@@ -87,7 +87,7 @@ type CapacityReader interface {
 
 // KanbanBuilder builds the kanban board.
 type KanbanBuilder interface {
-	Build(ctx context.Context) (*kanban.Board, error)
+	Build(ctx context.Context, filter kanban.BoardFilter) (*kanban.Board, error)
 }
 
 // SecretStore provides reactive, write-through configuration storage.
@@ -321,6 +321,7 @@ func (s *Server) registerRoutes() {
 
 	// Bot-facing API routes (token-authenticated, not cookie-authenticated).
 	s.mux.HandleFunc("POST /api/register", s.handleRegister)
+	s.mux.HandleFunc("GET /api/tasks", s.handleBotTaskList)
 	s.mux.HandleFunc("POST /api/tasks", s.handleBotTaskCreate)
 	s.mux.HandleFunc("POST /api/tasks/{id}/status", s.handleTaskStatusUpdate)
 	s.mux.HandleFunc("POST /api/tasks/{id}/log", s.handleTaskLog)
@@ -563,13 +564,45 @@ func (s *Server) handleBotCheck(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/bots", http.StatusSeeOther)
 }
 
+// kanbanData is the template data for kanban.html.
+type kanbanData struct {
+	Board         *kanban.Board
+	CurrentAgent  string
+	Agents        []kanbanAgentOption
+}
+
+// kanbanAgentOption is a registered agent shown in the board filter bar.
+type kanbanAgentOption struct {
+	Name string
+}
+
 func (s *Server) handleKanban(w http.ResponseWriter, r *http.Request) {
-	board, err := s.kanban.Build(r.Context())
+	agentFilter := r.URL.Query().Get("agent")
+	filter := kanban.BoardFilter{Assignee: agentFilter}
+
+	board, err := s.kanban.Build(r.Context(), filter)
 	if err != nil {
 		s.render(w, "kanban.html", pageData{Title: "Kanban", Error: err.Error()})
 		return
 	}
-	s.render(w, "kanban.html", pageData{Title: "Kanban", Data: board})
+
+	var agents []kanbanAgentOption
+	if s.db != nil {
+		if insts, listErr := s.db.ListAllInstances(r.Context()); listErr == nil {
+			for _, inst := range insts {
+				agents = append(agents, kanbanAgentOption{Name: inst.Name})
+			}
+		}
+	}
+
+	s.render(w, "kanban.html", pageData{
+		Title: "Kanban",
+		Data: kanbanData{
+			Board:        board,
+			CurrentAgent: agentFilter,
+			Agents:       agents,
+		},
+	})
 }
 
 func (s *Server) handleKanbanTaskStatus(w http.ResponseWriter, r *http.Request) {

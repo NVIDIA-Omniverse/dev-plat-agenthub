@@ -564,7 +564,7 @@ type simpleKanbanBuilder struct {
 	cfg config.KanbanConfig
 }
 
-func (kb *simpleKanbanBuilder) Build(_ context.Context) (*kanban.Board, error) {
+func (kb *simpleKanbanBuilder) Build(_ context.Context, _ kanban.BoardFilter) (*kanban.Board, error) {
 	board := &kanban.Board{}
 	for _, col := range kb.cfg.Columns {
 		board.Columns = append(board.Columns, &kanban.Column{Status: col})
@@ -578,8 +578,8 @@ type beadsKanbanBuilder struct {
 	columns []string
 }
 
-func (kb *beadsKanbanBuilder) Build(ctx context.Context) (*kanban.Board, error) {
-	return kanban.BuildBoard(ctx, kb.storage, kb.columns)
+func (kb *beadsKanbanBuilder) Build(ctx context.Context, filter kanban.BoardFilter) (*kanban.Board, error) {
+	return kanban.BuildBoard(ctx, kb.storage, kb.columns, filter)
 }
 
 // instancesLister is the subset of dolt.DB used by botChecker.

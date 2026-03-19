@@ -52,8 +52,8 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
 		return
 	}
-	if req.Name == "" || req.Host == "" || req.Port == 0 {
-		http.Error(w, `{"error":"name, host, and port are required"}`, http.StatusBadRequest)
+	if req.Name == "" {
+		http.Error(w, `{"error":"name is required"}`, http.StatusBadRequest)
 		return
 	}
 

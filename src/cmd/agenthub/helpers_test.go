@@ -17,6 +17,7 @@ import (
 	beadslib "github.com/steveyegge/beads"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/config"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/dolt"
+	"github.com/NVIDIA-DevPlat/agenthub/src/internal/kanban"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/openclaw"
 	"github.com/NVIDIA-DevPlat/agenthub/src/internal/store"
 	"github.com/stretchr/testify/require"
@@ -124,7 +125,7 @@ func TestSimpleKanbanBuilderBuild(t *testing.T) {
 	kb := &simpleKanbanBuilder{
 		cfg: config.KanbanConfig{Columns: []string{"open", "in_progress", "done"}},
 	}
-	board, err := kb.Build(context.Background())
+	board, err := kb.Build(context.Background(), kanban.BoardFilter{})
 	require.NoError(t, err)
 	require.NotNil(t, board)
 	require.Len(t, board.Columns, 3)
@@ -134,7 +135,7 @@ func TestSimpleKanbanBuilderBuild(t *testing.T) {
 
 func TestSimpleKanbanBuilderEmptyColumns(t *testing.T) {
 	kb := &simpleKanbanBuilder{cfg: config.KanbanConfig{}}
-	board, err := kb.Build(context.Background())
+	board, err := kb.Build(context.Background(), kanban.BoardFilter{})
 	require.NoError(t, err)
 	require.NotNil(t, board)
 	require.Empty(t, board.Columns)
@@ -422,7 +423,7 @@ func (m *mockIssueSearcher) SearchIssues(_ context.Context, _ string, _ beadslib
 
 func TestBeadsKanbanBuilder(t *testing.T) {
 	kb := &beadsKanbanBuilder{storage: &mockIssueSearcher{}, columns: []string{"open", "in_progress"}}
-	board, err := kb.Build(context.Background())
+	board, err := kb.Build(context.Background(), kanban.BoardFilter{})
 	require.NoError(t, err)
 	require.Len(t, board.Columns, 2)
 }

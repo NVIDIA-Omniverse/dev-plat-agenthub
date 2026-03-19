@@ -13,6 +13,14 @@ type IssueSearcher interface {
 	SearchIssues(ctx context.Context, query string, filter beadslib.IssueFilter) ([]*beadslib.Issue, error)
 }
 
+// BoardFilter scopes the kanban board to a subset of issues.
+// Zero value means no filtering (all issues).
+type BoardFilter struct {
+	// Assignee limits the board to issues assigned to this agent name.
+	// Empty string means all issues regardless of assignee.
+	Assignee string
+}
+
 // Board represents the full kanban board.
 type Board struct {
 	Columns []*Column
@@ -24,11 +32,16 @@ type Column struct {
 	Issues []*beadslib.Issue
 }
 
-// BuildBoard reads all issues from storage and groups them into columns.
+// BuildBoard reads issues from storage and groups them into columns.
 // columns defines the ordered column list (from config.yaml: kanban.columns).
 // Issues whose status doesn't match any column are placed in an "other" column.
-func BuildBoard(ctx context.Context, storage IssueSearcher, columns []string) (*Board, error) {
-	issues, err := storage.SearchIssues(ctx, "", beadslib.IssueFilter{})
+// filter scopes the board; zero value returns all issues.
+func BuildBoard(ctx context.Context, storage IssueSearcher, columns []string, filter BoardFilter) (*Board, error) {
+	f := beadslib.IssueFilter{}
+	if filter.Assignee != "" {
+		f.Assignee = &filter.Assignee
+	}
+	issues, err := storage.SearchIssues(ctx, "", f)
 	if err != nil {
 		return nil, fmt.Errorf("loading issues for kanban: %w", err)
 	}
